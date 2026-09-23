@@ -9,6 +9,8 @@ import streamlit as st
 
 from finance_dashboard.dashboard_controller import DashboardController
 from finance_dashboard.favourite_list_of_stocks import FavouriteListOfStocks
+from finance_dashboard.mongo_client import MongoDB
+from finance_dashboard.services.auth_service import AuthenticationService
 from finance_dashboard.stock_comparator import StockComparator
 
 
@@ -20,6 +22,14 @@ favorites_store = FavouriteListOfStocks(Path("favorites.json"))
 DEFAULT_FAVORITES = ["AAPL", "MSFT", "GOOG"]
 
 
+def get_auth_service() -> AuthenticationService | None:
+    mongo_uri = st.secrets.get("mongodb_uri", "").strip()
+    if not mongo_uri:
+        return None
+    mongo_db = MongoDB(mongo_uri)
+    return AuthenticationService(mongo_db.user_repository)
+
+
 def render_metrics(summary: dict, ticker: str) -> None:
     metrics = summary.get(ticker, {})
     col1, col2, col3, col4 = st.columns(4)
@@ -29,7 +39,45 @@ def render_metrics(summary: dict, ticker: str) -> None:
     col4.metric("Max Return", f"{metrics.get('max_return', 0.0):.4f}")
 
 
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+if st.session_state.user is None:
+    st.title("Trading Simulator")
+    st.subheader("Create your account")
+
+    with st.form("registration_form"):
+        username = st.text_input("Username (valid email)", placeholder="name@example.com")
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm password", type="password")
+        submitted = st.form_submit_button("Register")
+
+    if submitted:
+        service = get_auth_service()
+        if service is None:
+            st.error("Add your MongoDB URI to .streamlit/secrets.toml before registering.")
+        else:
+            try:
+                user = service.register_user(username.strip(), password, confirm_password)
+                st.session_state.user = user
+                st.success(f"Registration successful. Welcome, {user.username}!")
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+
+    st.info("Use the MongoDB connection string stored in .streamlit/secrets.toml to persist user accounts.")
+    st.stop()
+
+user = st.session_state.user
 st.title("Finance Dashboard")
+st.subheader(f"Profile: {user.username}")
+profile_col, balance_col = st.columns(2)
+profile_col.write(f"Created: {user.created_at.isoformat() if user.created_at else 'N/A'}")
+balance_col.metric("Cash Balance", f"${user.cash_balance:,.2f}")
+
+if st.button("Log out"):
+    st.session_state.user = None
+    st.rerun()
 
 with st.sidebar:
     st.header("Inputs")
