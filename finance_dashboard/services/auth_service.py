@@ -19,6 +19,19 @@ class AuthenticationService:
     def _hash_password(password: str) -> str:
         return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
+    def login_user(self, username: str, password: str) -> User:
+        if not self._is_valid_email(username):
+            raise ValueError("Username must be a valid email address.")
+
+        user = self.repository.find_by_username(username.strip())
+        if user is None:
+            raise ValueError("No account found for this email.")
+
+        if user.password != self._hash_password(password):
+            raise ValueError("Incorrect password.")
+
+        return user
+
     def register_user(self, username: str, password: str, confirm_password: str) -> User:
         if not self._is_valid_email(username):
             raise ValueError("Username must be a valid email address.")

@@ -19,7 +19,7 @@ st.set_page_config(page_title="Finance Dashboard", layout="wide")
 controller = DashboardController()
 favorites_store = FavouriteListOfStocks(Path("favorites.json"))
 
-DEFAULT_FAVORITES = ["AAPL", "MSFT", "GOOG"]
+DEFAULT_HOLDINGS: dict[str, dict[str, float]] = {}
 
 
 def get_auth_service() -> AuthenticationService | None:
@@ -39,160 +39,269 @@ def render_metrics(summary: dict, ticker: str) -> None:
     col4.metric("Max Return", f"{metrics.get('max_return', 0.0):.4f}")
 
 
+def get_default_range() -> tuple[pd.Timestamp, pd.Timestamp]:
+    end = pd.Timestamp.today().normalize()
+    start = end - pd.DateOffset(months=6)
+    return start, end
+
+
+st.markdown(
+    """
+    <style>
+    div.stButton > button[kind="primary"] {
+        background-color: #2e7d32;
+        color: white;
+        border: 1px solid #2e7d32;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #1b5e20;
+        border-color: #1b5e20;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def render_stock_card(
+    ticker: str,
+    snapshot: dict,
+    *,
+    show_add_to_watchlist: bool = True,
+    show_detail_button: bool = True,
+) -> None:
+    is_positive = snapshot["day_return"] >= 0
+    with st.container(border=True):
+        left_col, right_col = st.columns([4, 2])
+        with left_col:
+            st.markdown(
+                f"### {ticker} · ${snapshot['current_price']:.2f}"
+                f" · <span style='color:{'green' if is_positive else 'red'}'>"
+                f"{snapshot['day_return']:+.2%}</span>",
+                unsafe_allow_html=True,
+            )
+        with right_col:
+            st.metric("Day return", f"{snapshot['day_return']:+.2%}", delta=f"{snapshot['day_change']:+.2f}")
+
+        st.caption(f"Last price: ${snapshot['current_price']:.2f} | Change: ${snapshot['day_change']:+.2f}")
+
+        button_cols = st.columns(2 if show_add_to_watchlist and show_detail_button else 1)
+        if show_add_to_watchlist:
+            if button_cols[0].button("⭐ Add to watchlist", key=f"fav_{ticker}", use_container_width=True):
+                favorites_store.add(ticker)
+                st.success(f"{ticker} added to watchlist.")
+
+        if show_detail_button:
+            detail_col = button_cols[1] if show_add_to_watchlist else button_cols[0]
+            if detail_col.button(
+                "Go to detail page →",
+                key=f"detail_{ticker}",
+                type="primary",
+                use_container_width=True,
+            ):
+                st.session_state["detail_ticker"] = ticker
+                st.rerun()
+
+
 if "user" not in st.session_state:
     st.session_state.user = None
 
 if st.session_state.user is None:
     st.title("Trading Simulator")
-    st.subheader("Create your account")
+    st.subheader("Welcome")
+    auth_tab, register_tab = st.tabs(["Login", "Sign up"])
 
-    with st.form("registration_form"):
-        username = st.text_input("Username (valid email)", placeholder="name@example.com")
-        password = st.text_input("Password", type="password")
-        confirm_password = st.text_input("Confirm password", type="password")
-        submitted = st.form_submit_button("Register")
+    with auth_tab:
+        with st.form("login_form"):
+            login_username = st.text_input("Username (valid email)", placeholder="name@example.com")
+            login_password = st.text_input("Password", type="password")
+            login_submitted = st.form_submit_button("Login")
 
-    if submitted:
-        service = get_auth_service()
-        if service is None:
-            st.error("Add your MongoDB URI to .streamlit/secrets.toml before registering.")
-        else:
-            try:
-                user = service.register_user(username.strip(), password, confirm_password)
-                st.session_state.user = user
-                st.success(f"Registration successful. Welcome, {user.username}!")
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
+        if login_submitted:
+            service = get_auth_service()
+            if service is None:
+                st.error("Add your MongoDB URI to .streamlit/secrets.toml before logging in.")
+            else:
+                try:
+                    user = service.login_user(login_username.strip(), login_password)
+                    st.session_state.user = user
+                    st.success(f"Welcome back, {user.username}!")
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+
+    with register_tab:
+        with st.form("registration_form"):
+            username = st.text_input("Username (valid email)", placeholder="name@example.com", key="signup_username")
+            password = st.text_input("Password", type="password", key="signup_password")
+            confirm_password = st.text_input("Confirm password", type="password", key="signup_confirm_password")
+            submitted = st.form_submit_button("Register")
+
+        if submitted:
+            service = get_auth_service()
+            if service is None:
+                st.error("Add your MongoDB URI to .streamlit/secrets.toml before registering.")
+            else:
+                try:
+                    user = service.register_user(username.strip(), password, confirm_password)
+                    st.session_state.user = user
+                    st.success(f"Registration successful. Welcome, {user.username}!")
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
 
     st.info("Use the MongoDB connection string stored in .streamlit/secrets.toml to persist user accounts.")
     st.stop()
 
+if "portfolio_holdings" not in st.session_state:
+    st.session_state.portfolio_holdings = {}
+
 user = st.session_state.user
 st.title("Finance Dashboard")
 st.subheader(f"Profile: {user.username}")
-profile_col, balance_col = st.columns(2)
-profile_col.write(f"Created: {user.created_at.isoformat() if user.created_at else 'N/A'}")
-balance_col.metric("Cash Balance", f"${user.cash_balance:,.2f}")
 
 if st.button("Log out"):
     st.session_state.user = None
+    st.session_state.pop("detail_ticker", None)
+    st.session_state.pop("search_snapshot", None)
     st.rerun()
 
-with st.sidebar:
-    st.header("Inputs")
-    tickers_input = st.text_input("Tickers (comma separated)", value="AAPL, MSFT, GOOG")
-    data_frequency = st.selectbox("Data frequency", ["Daily", "Weekly", "Monthly", "Yearly"], index=0)
-    default_end = pd.Timestamp.today().normalize().to_pydatetime().date()
-    default_start = default_end - pd.DateOffset(months=6)
-    start_date, end_date = st.date_input(
-        "Date range",
-        value=(default_start, default_end),
-    )
+default_start, default_end = get_default_range()
 
-    if end_date < start_date:
-        st.warning("End date must be after start date.")
-    elif end_date == start_date:
-        st.warning("Select a date range longer than one day for market data.")
+if "detail_ticker" in st.session_state and st.session_state["detail_ticker"]:
+    detail_ticker = st.session_state["detail_ticker"]
+    if st.button("Back to landing page", key="back_to_landing"):
+        st.session_state.pop("detail_ticker", None)
+        st.rerun()
 
-    favorite_list = favorites_store.list() or DEFAULT_FAVORITES
-    favorites = st.multiselect("Favourite stocks", options=favorite_list, default=favorite_list[:3])
-    if st.button("Save selected favorites"):
-        for symbol in favorites:
-            favorites_store.add(symbol)
-        st.success("Favorites saved.")
+    try:
+        detail_dashboard = controller.build_dashboard(
+            [detail_ticker],
+            str(default_start.date()),
+            str(default_end.date()),
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
 
-if st.button("Load Dashboard"):
-    symbols = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
-    valid_symbols = [s for s in symbols if s]
-    if not valid_symbols:
-        st.error("Please enter at least one ticker.")
+    if detail_dashboard.errors:
+        for ticker, msg in detail_dashboard.errors.items():
+            st.warning(msg)
+        st.stop()
+
+    resampled_data = StockComparator.resample_data(detail_dashboard.data, "Daily")
+    detail_dashboard.data = resampled_data
+    detail_dashboard.summary = StockComparator.compute_summary(detail_dashboard.data)
+    detail_dashboard.returns = {
+        ticker: metrics["returns"] for ticker, metrics in detail_dashboard.summary.items()
+    }
+
+    st.title(f"{detail_ticker} Detail Page")
+    detail_returns = detail_dashboard.returns.get(detail_ticker)
+    if detail_returns is not None and not detail_returns.empty:
+        st.line_chart(detail_returns)
+
+    render_metrics(detail_dashboard.summary, detail_ticker)
+    stock_summary = detail_dashboard.summary.get(detail_ticker, {})
+    if stock_summary:
+        st.json(stock_summary)
+    st.stop()
+
+st.caption(f"Created: {user.created_at.isoformat() if user.created_at else 'N/A'}")
+
+cash_col, holdings_value_col, total_value_col = st.columns(3)
+portfolio_snapshot = controller.build_portfolio_snapshot(
+    holdings=st.session_state.portfolio_holdings,
+    prices={
+        ticker: float(position.get("avg_cost", 0.0))
+        for ticker, position in st.session_state.portfolio_holdings.items()
+    },
+    cash_balance=user.cash_balance,
+)
+cash_col.metric("Available cash", f"${portfolio_snapshot['cash']:.2f}")
+holdings_value_col.metric("Invested value", f"${portfolio_snapshot['invested']:.2f}")
+total_value_col.metric("Total portfolio value", f"${portfolio_snapshot['total_value']:.2f}")
+
+search_query = st.text_input("Search stocks or tickers", placeholder="Try AAPL, MSFT, NVDA")
+search_clicked = st.button("Search")
+
+if search_clicked:
+    if not search_query.strip():
+        st.warning("Please enter a stock ticker or company symbol.")
     else:
-        effective_start = start_date
-        effective_end = end_date
-        if effective_end <= effective_start:
-            effective_end = effective_start + timedelta(days=1)
-            st.warning("The selected range was too short, so the app extended it by one day to fetch data.")
+        searched_ticker = search_query.strip().upper()
         try:
-            dashboard = controller.build_dashboard(valid_symbols, str(effective_start), str(effective_end))
-            if dashboard.errors:
-                for ticker, msg in dashboard.errors.items():
-                    st.warning(msg)
-            if not dashboard.data:
-                st.info("No dashboard data available for the selected range.")
-            else:
-                resampled_data = StockComparator.resample_data(dashboard.data, data_frequency)
-                dashboard.data = resampled_data
-                dashboard.summary = StockComparator.compute_summary(dashboard.data)
-                dashboard.returns = {ticker: metrics["returns"] for ticker, metrics in dashboard.summary.items()}
-                st.session_state["dashboard"] = dashboard
-                st.session_state["selected_view"] = st.session_state.get("selected_view", "Returns")
-                st.session_state["data_frequency"] = data_frequency
+            snapshot = controller.get_stock_snapshot(
+                searched_ticker,
+                str((default_end - pd.DateOffset(days=30)).date()),
+                str(default_end.date()),
+            )
+            st.session_state.search_snapshot = snapshot
         except ValueError as exc:
             st.error(str(exc))
 
-if "dashboard" in st.session_state:
-    dashboard = st.session_state["dashboard"]
-    view_names = ["Returns", "Volatility", "Correlation", "Max/Min/Avg Returns"]
-    selected_view = st.radio(
-        "Dashboard view",
-        view_names,
-        index=view_names.index(st.session_state.get("selected_view", "Returns")),
-        horizontal=True,
-    )
-    st.session_state["selected_view"] = selected_view
+if "search_snapshot" in st.session_state:
+    snapshot = st.session_state["search_snapshot"]
+    render_stock_card(snapshot["ticker"], snapshot, show_add_to_watchlist=True, show_detail_button=True)
 
-    if selected_view == "Returns":
-        for ticker in dashboard.tickers:
-            if ticker in dashboard.returns:
-                st.write(f"## {ticker}")
-                st.line_chart(dashboard.returns[ticker])
-
-    elif selected_view == "Volatility":
-        volatility_data = StockComparator.volatility_over_time(dashboard.data)
-        if not volatility_data:
-            st.info("No volatility data available for the selected range.")
-        for ticker in dashboard.tickers:
-            if ticker in volatility_data and not volatility_data[ticker].empty:
-                st.write(f"## {ticker}")
-                st.line_chart(volatility_data[ticker])
-
-    elif selected_view == "Correlation":
-        series_map = {
-            ticker: dashboard.returns.get(ticker, pd.Series(dtype=float))
-            for ticker in dashboard.tickers
-            if ticker in dashboard.returns
+st.subheader("Holdings")
+favorite_list = favorites_store.list()
+show_favorites_only = st.checkbox("Filter by favourites", value=False)
+portfolio_rows = []
+for ticker, position in st.session_state.portfolio_holdings.items():
+    if show_favorites_only and ticker not in favorite_list:
+        continue
+    shares = float(position.get("shares", 0.0))
+    avg_cost = float(position.get("avg_cost", 0.0))
+    current_price = avg_cost
+    portfolio_rows.append(
+        {
+            "Ticker": ticker,
+            "Shares": shares,
+            "Avg Cost": avg_cost,
+            "Market Price": current_price,
+            "Market Value": shares * current_price,
         }
-        if series_map:
-            matrix = pd.DataFrame(series_map).corr()
-            heatmap = go.Figure(
-                data=go.Heatmap(
-                    z=matrix.to_numpy(),
-                    x=matrix.columns,
-                    y=matrix.index,
-                    colorscale="RdYlBu_r",
-                    zmid=0,
-                    hoverongaps=False,
-                )
-            )
-            heatmap.update_layout(title="Stock correlation heatmap", height=500)
-            st.plotly_chart(heatmap, use_container_width=True)
-        else:
-            st.info("No correlation data available for the selected tickers.")
+    )
 
-    elif selected_view == "Max/Min/Avg Returns":
-        for ticker in dashboard.tickers:
-            if ticker in dashboard.summary:
-                st.write(f"## {ticker}")
-                render_metrics(dashboard.summary, ticker)
-
-    stock_tabs = st.tabs([ticker for ticker in dashboard.tickers if ticker])
-    for tab, ticker in zip(stock_tabs, dashboard.tickers):
-        with tab:
-            st.write(f"### {ticker} summary")
-            if ticker in dashboard.summary:
-                st.json(dashboard.summary[ticker])
-            else:
-                st.info("No summary available for this ticker.")
+holding_table = pd.DataFrame(portfolio_rows)
+if not holding_table.empty:
+    st.dataframe(holding_table, use_container_width=True)
 else:
-    st.info("Use the sidebar to enter tickers and load a dashboard.")
+    st.info("No holdings to display yet.")
+
+st.subheader("Cash vs invested")
+figure = go.Figure(
+    data=[
+        go.Pie(
+            labels=["Cash", "Invested"],
+            values=[portfolio_snapshot["cash"], portfolio_snapshot["invested"]],
+            hole=0.45,
+            marker_colors=["#2E8B57", "#1F77B4"],
+            textinfo="label+value",
+            hovertemplate="%{label}: $%{value:,.2f}<extra></extra>",
+        )
+    ]
+)
+figure.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=350)
+st.plotly_chart(figure, use_container_width=True)
+
+if favorite_list:
+    st.subheader("Favourites")
+    for favorite in favorite_list:
+        try:
+            favorite_snapshot = controller.get_stock_snapshot(
+                favorite,
+                str((default_end - pd.DateOffset(days=30)).date()),
+                str(default_end.date()),
+            )
+        except ValueError:
+            continue
+        render_stock_card(
+            favorite_snapshot["ticker"],
+            favorite_snapshot,
+            show_add_to_watchlist=False,
+            show_detail_button=True,
+        )
+else:
+    st.info("No favourites added yet.")

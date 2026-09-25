@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from finance_dashboard.dashboard import Dashboard
 from finance_dashboard.dashboard_controller import DashboardController
@@ -99,6 +100,38 @@ def test_stock_comparator_builds_volatility_series_and_correlation_matrix():
     )
     assert set(corr.columns) == {"AAPL", "MSFT"}
     assert corr.shape == (2, 2)
+
+
+def test_dashboard_controller_builds_stock_snapshot():
+    controller = DashboardController()
+    sample = pd.DataFrame(
+        {"Close": [100.0, 101.0, 99.0, 102.0]},
+        index=pd.date_range("2024-01-01", periods=4, freq="D"),
+    )
+    controller.fetch_stock_data = lambda ticker, start_date, end_date: sample  # type: ignore[assignment]
+
+    snapshot = controller.get_stock_snapshot("AAPL", "2024-01-01", "2024-02-01")
+
+    assert snapshot["ticker"] == "AAPL"
+    assert snapshot["current_price"] == pytest.approx(102.0)
+    assert snapshot["day_return"] == pytest.approx((102.0 - 99.0) / 99.0)
+
+
+def test_dashboard_controller_builds_portfolio_snapshot():
+    controller = DashboardController()
+
+    portfolio = controller.build_portfolio_snapshot(
+        holdings={
+            "AAPL": {"shares": 10, "avg_cost": 100.0},
+            "MSFT": {"shares": 5, "avg_cost": 200.0},
+        },
+        prices={"AAPL": 120.0, "MSFT": 220.0},
+        cash_balance=5000.0,
+    )
+
+    assert portfolio["cash"] == 5000.0
+    assert portfolio["invested"] == pytest.approx(1200.0 + 1100.0)
+    assert portfolio["total_value"] == pytest.approx(7300.0)
 
 
 def test_favourite_list_round_trip(tmp_path):

@@ -41,6 +41,25 @@ def test_register_user_rejects_invalid_email():
         service.register_user("not-an-email", "StrongPass123!", "StrongPass123!")
 
 
+def test_login_user_accepts_valid_credentials():
+    repository = FakeUserRepository()
+    service = AuthenticationService(repository=repository)
+    service.register_user("user@example.com", "StrongPass123!", "StrongPass123!")
+
+    user = service.login_user("user@example.com", "StrongPass123!")
+
+    assert user.username == "user@example.com"
+
+
+def test_login_user_rejects_invalid_password():
+    repository = FakeUserRepository()
+    service = AuthenticationService(repository=repository)
+    service.register_user("user@example.com", "StrongPass123!", "StrongPass123!")
+
+    with pytest.raises(ValueError, match="Incorrect password"):
+        service.login_user("user@example.com", "WrongPass123!")
+
+
 def test_register_user_rejects_non_matching_passwords():
     service = AuthenticationService(repository=FakeMongoClient().user_repository)
 

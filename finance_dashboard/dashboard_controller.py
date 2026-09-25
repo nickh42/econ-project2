@@ -51,6 +51,48 @@ class DashboardController:
 
         return data
 
+    def get_stock_snapshot(self, ticker: str, start_date: str, end_date: str) -> dict:
+        normalized = self.normalize_tickers([ticker])[0]
+        frame = self.fetch_stock_data(normalized, start_date, end_date)
+        close_values = frame["Close"].dropna()
+        if close_values.empty:
+            raise ValueError(f"No close values available for {normalized}.")
+
+        current_price = float(close_values.iloc[-1])
+        previous_price = float(close_values.iloc[-2]) if len(close_values) >= 2 else current_price
+        day_change = current_price - previous_price
+        day_return = (day_change / previous_price) if previous_price else 0.0
+
+        return {
+            "ticker": normalized,
+            "current_price": current_price,
+            "previous_price": previous_price,
+            "day_change": day_change,
+            "day_return": day_return,
+            "last_updated": close_values.index[-1],
+        }
+
+    def build_portfolio_snapshot(
+        self,
+        holdings: Dict[str, Dict[str, float]],
+        prices: Dict[str, float],
+        cash_balance: float,
+    ) -> Dict[str, float | Dict[str, float]]:
+        invested = 0.0
+        for ticker, position in holdings.items():
+            shares = float(position.get("shares", 0.0))
+            avg_cost = float(position.get("avg_cost", 0.0))
+            market_price = float(prices.get(ticker, avg_cost))
+            invested += shares * market_price
+
+        total_value = float(cash_balance) + invested
+        return {
+            "cash": float(cash_balance),
+            "invested": invested,
+            "total_value": total_value,
+            "holdings": holdings,
+        }
+
     def build_dashboard(self, tickers: Iterable[str], start_date: str, end_date: str) -> Dashboard:
         normalized = self.normalize_tickers(tickers)
         if len(normalized) > 3:
