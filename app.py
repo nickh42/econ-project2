@@ -41,8 +41,113 @@ def render_metrics(summary: dict, ticker: str) -> None:
 
 def get_default_range() -> tuple[pd.Timestamp, pd.Timestamp]:
     end = pd.Timestamp.today().normalize()
-    start = end - pd.DateOffset(months=6)
+    start = end - pd.DateOffset(years=1)
     return start, end
+
+
+def render_signed_line_chart(series: pd.Series, *, title: str, zero_reference: bool = True, color_by_sign: bool = False) -> None:
+    values = series.dropna()
+    if values.empty:
+        st.info(f"No {title.lower()} data available.")
+        return
+
+    fig = go.Figure()
+    x_values = values.index
+    y_values = values.to_numpy(dtype=float)
+
+    if zero_reference:
+        fig.add_hline(
+            y=0,
+            line_dash="dot",
+            line_color="gray",
+            line_width=1.5,
+            annotation_text="0",
+            annotation_position="top left",
+        )
+
+    if color_by_sign:
+        fig.add_hrect(
+            y0=0,
+            y1=max(y_values.max(), 0.0),
+            fillcolor="rgba(76, 175, 80, 0.12)",
+            line_width=0,
+            layer="below",
+        )
+        fig.add_hrect(
+            y0=min(y_values.min(), 0.0),
+            y1=0,
+            fillcolor="rgba(244, 67, 54, 0.12)",
+            line_width=0,
+            layer="below",
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=y_values,
+                mode="lines",
+                line=dict(color="#000000", width=3),
+                connectgaps=True,
+                showlegend=False,
+                hovertemplate="%{x}<br>%{y:.4f}<extra></extra>",
+            )
+        )
+        for idx, value in enumerate(y_values):
+            if value < 0:
+                fig.add_trace(
+                    go.Scatter(
+                        x=[x_values[idx]],
+                        y=[value],
+                        mode="lines",
+                        line=dict(color="#ef5350", width=3),
+                        showlegend=False,
+                        hovertemplate="%{x}<br>%{y:.4f}<extra></extra>",
+                    )
+                )
+    else:
+        fig.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=y_values,
+                mode="lines",
+                line=dict(color="#1565c0", width=3),
+                connectgaps=True,
+                name=title,
+                hovertemplate="%{x}<br>%{y:.4f}<extra></extra>",
+            )
+        )
+
+    fig.update_xaxes(
+        range=[x_values.min(), x_values.max()],
+        fixedrange=True,
+        rangeslider=dict(visible=False),
+    )
+    fig.update_yaxes(range=[min(y_values.min(), 0.0), max(y_values.max(), 0.0)], fixedrange=True)
+    fig.update_layout(
+        template="plotly_white",
+        title=title,
+        margin=dict(l=20, r=20, t=40, b=20),
+        height=320,
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False, "doubleClick": "reset"})
+
+
+def build_sec_data_table(sec_data: dict) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for table_name, frame in sec_data.items():
+        if not isinstance(frame, pd.DataFrame):
+            continue
+        table = frame.copy().reset_index()
+        if table.empty:
+            continue
+        table.columns = [str(column) for column in table.columns]
+        table.insert(0, "section", table_name)
+        frames.append(table)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
 
 
 st.markdown(
@@ -56,6 +161,19 @@ st.markdown(
     div.stButton > button[kind="primary"]:hover {
         background-color: #1b5e20;
         border-color: #1b5e20;
+    }
+    div[data-testid="stMetric"] {
+        min-height: 110px;
+    }
+    div[data-testid="stMetricLabel"] {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        font-size: 1.1rem;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.5rem;
+        white-space: normal;
+        overflow-wrap: anywhere;
     }
     </style>
     """,
@@ -174,37 +292,96 @@ if "detail_ticker" in st.session_state and st.session_state["detail_ticker"]:
         st.session_state.pop("detail_ticker", None)
         st.rerun()
 
+    detail_start = st.date_input(
+        "Detail start date",
+        value=default_start.date(),
+        min_value=pd.Timestamp("2000-01-01").date(),
+        max_value=default_end.date(),
+    )
+    detail_end = st.date_input(
+        "Detail end date",
+        value=default_end.date(),
+        min_value=detail_start,
+        max_value=pd.Timestamp.today().date(),
+    )
+
     try:
-        detail_dashboard = controller.build_dashboard(
-            [detail_ticker],
-            str(default_start.date()),
-            str(default_end.date()),
+        detail_snapshot = controller.get_stock_detail(
+            detail_ticker,
+            str(detail_start),
+            str(detail_end),
         )
     except ValueError as exc:
         st.error(str(exc))
         st.stop()
 
-    if detail_dashboard.errors:
-        for ticker, msg in detail_dashboard.errors.items():
-            st.warning(msg)
-        st.stop()
+    st.title(f"{detail_snapshot['company_name']} ({detail_ticker})")
+    st.caption(f"{detail_snapshot['sector']} / {detail_snapshot['industry']}")
 
-    resampled_data = StockComparator.resample_data(detail_dashboard.data, "Daily")
-    detail_dashboard.data = resampled_data
-    detail_dashboard.summary = StockComparator.compute_summary(detail_dashboard.data)
-    detail_dashboard.returns = {
-        ticker: metrics["returns"] for ticker, metrics in detail_dashboard.summary.items()
-    }
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.metric("Current Price", f"${detail_snapshot['current_price']:.2f}")
+        st.metric("Market Cap", f"${detail_snapshot['market_cap']:,}")
+    with col_right:
+        st.metric("Daily % change", f"{detail_snapshot['daily_percent_change']:+.2%}")
+        st.metric("Sector / industry", f"{detail_snapshot['sector']} / {detail_snapshot['industry']}")
 
-    st.title(f"{detail_ticker} Detail Page")
-    detail_returns = detail_dashboard.returns.get(detail_ticker)
-    if detail_returns is not None and not detail_returns.empty:
-        st.line_chart(detail_returns)
+    with st.expander("Historical price graph", expanded=True):
+        historical = detail_snapshot["historical_prices"]["Close"].dropna()
+        historical_fig = go.Figure()
+        historical_fig.add_trace(
+            go.Scatter(
+                x=historical.index,
+                y=historical.values,
+                mode="lines",
+                line=dict(color="#1f77b4", width=3),
+                hovertemplate="%{x}<br>$%{y:,.2f}<extra></extra>",
+            )
+        )
+        historical_fig.update_xaxes(
+            range=[historical.index.min(), historical.index.max()],
+            fixedrange=True,
+            rangeslider=dict(visible=False),
+        )
+        historical_fig.update_yaxes(range=[historical.min(), historical.max()], fixedrange=True)
+        historical_fig.update_layout(
+            template="plotly_white",
+            margin=dict(l=20, r=20, t=20, b=20),
+            height=320,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+        )
+        st.plotly_chart(
+            historical_fig,
+            use_container_width=True,
+            config={"displayModeBar": False, "scrollZoom": False, "doubleClick": "reset"},
+        )
 
-    render_metrics(detail_dashboard.summary, detail_ticker)
-    stock_summary = detail_dashboard.summary.get(detail_ticker, {})
-    if stock_summary:
-        st.json(stock_summary)
+    with st.expander("Return graph"):
+        render_signed_line_chart(
+            detail_snapshot["daily_returns"],
+            title="Daily Return",
+            zero_reference=True,
+            color_by_sign=True,
+        )
+
+    with st.expander("Volatility graph"):
+        render_signed_line_chart(detail_snapshot["volatility_series"], title="Volatility", zero_reference=False, color_by_sign=False)
+
+    with st.expander("SEC financial data"):
+        sec_table = build_sec_data_table(detail_snapshot["sec_financial_data"])
+        if sec_table.empty:
+            st.info("No SEC financial data was returned for this stock.")
+        else:
+            st.dataframe(sec_table, use_container_width=True)
+
+    with st.expander("Recent SEC filings"):
+        filings = detail_snapshot["recent_filings"]
+        if filings:
+            st.dataframe(pd.DataFrame(filings), use_container_width=True)
+        else:
+            st.info("No recent SEC filings were returned for this stock.")
+
     st.stop()
 
 st.caption(f"Created: {user.created_at.isoformat() if user.created_at else 'N/A'}")

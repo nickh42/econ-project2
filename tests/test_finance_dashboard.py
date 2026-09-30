@@ -134,6 +134,33 @@ def test_dashboard_controller_builds_portfolio_snapshot():
     assert portfolio["total_value"] == pytest.approx(7300.0)
 
 
+def test_dashboard_controller_builds_stock_detail_payload():
+    controller = DashboardController()
+    sample = pd.DataFrame(
+        {"Close": [100.0, 101.0, 99.0, 102.0]},
+        index=pd.date_range("2024-01-01", periods=4, freq="D"),
+    )
+    controller.fetch_stock_data = lambda ticker, start_date, end_date: sample  # type: ignore[assignment]
+    controller.fetch_stock_profile = lambda ticker: {  # type: ignore[assignment]
+        "company_name": "Apple Inc.",
+        "market_cap": 3000000000000,
+        "sector": "Technology",
+        "industry": "Consumer Electronics",
+    }
+    controller.fetch_sec_financial_data = lambda ticker: {"Revenue": {"2024": 1000}}  # type: ignore[assignment]
+    controller.fetch_recent_sec_filings = lambda ticker: [{"form": "10-K", "filing_date": "2024-01-30"}]  # type: ignore[assignment]
+
+    detail = controller.get_stock_detail("AAPL", "2024-01-01", "2024-02-01")
+
+    assert detail["ticker"] == "AAPL"
+    assert detail["company_name"] == "Apple Inc."
+    assert detail["market_cap"] == 3000000000000
+    assert detail["sector"] == "Technology"
+    assert detail["historical_prices"]["Close"].iloc[-1] == pytest.approx(102.0)
+    assert detail["daily_returns"].iloc[-1] == pytest.approx(0.03)
+    assert detail["recent_filings"][0]["form"] == "10-K"
+
+
 def test_favourite_list_round_trip(tmp_path):
     storage = tmp_path / "favorites.json"
     favorites = FavouriteListOfStocks(str(storage))

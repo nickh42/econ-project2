@@ -5,4 +5,5 @@ numpy>=1.26.0
 matplotlib>=3.8.0
 plotly>=5.20.0
 pymongo>=4.8.0
+sec-edgar-downloader>=5.0.0
 pytest>=8.0.0
