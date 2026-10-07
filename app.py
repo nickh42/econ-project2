@@ -664,9 +664,34 @@ for ticker, position in st.session_state.portfolio_holdings.items():
         }
     )
 
-holding_table = pd.DataFrame(portfolio_rows)
-if not holding_table.empty:
-    st.dataframe(holding_table, use_container_width=True)
+if portfolio_rows:
+    header_cols = st.columns((1.2, 1, 1.2, 1.2, 1.5))
+    with header_cols[0]:
+        st.caption("Ticker")
+    with header_cols[1]:
+        st.caption("Shares")
+    with header_cols[2]:
+        st.caption("Avg Cost")
+    with header_cols[3]:
+        st.caption("Market Price")
+    with header_cols[4]:
+        st.caption("Market Value")
+
+    for row in portfolio_rows:
+        ticker = row["Ticker"]
+        cols = st.columns((1.2, 1, 1.2, 1.2, 1.5))
+        with cols[0]:
+            if st.button(ticker, key=f"holding_detail_{ticker}", use_container_width=True):
+                st.session_state["detail_ticker"] = ticker
+                st.rerun()
+        with cols[1]:
+            st.write(f"{row['Shares']:.2f}")
+        with cols[2]:
+            st.write(f"${row['Avg Cost']:.2f}")
+        with cols[3]:
+            st.write(f"${row['Market Price']:.2f}")
+        with cols[4]:
+            st.write(f"${row['Market Value']:.2f}")
 else:
     st.info("No holdings to display yet.")
 
