@@ -12,9 +12,13 @@ from finance_dashboard.favourite_list_of_stocks import FavouriteListOfStocks
 from finance_dashboard.mongo_client import MongoDB
 from finance_dashboard.services.auth_service import AuthenticationService
 from finance_dashboard.stock_comparator import StockComparator
+from finance_dashboard.marketaux_client import MarketauxClient
 
 
 st.set_page_config(page_title="Finance Dashboard", layout="wide")
+
+# Incrementing counter to ensure per-render unique element keys
+_render_card_counter = 0
 
 controller = DashboardController()
 favorites_store = FavouriteListOfStocks(Path("favorites.json"))
@@ -188,6 +192,10 @@ def render_stock_card(
     show_add_to_watchlist: bool = True,
     show_detail_button: bool = True,
 ) -> None:
+    global _render_card_counter
+    _render_card_counter += 1
+    unique_id = _render_card_counter
+
     is_positive = snapshot["day_return"] >= 0
     with st.container(border=True):
         left_col, right_col = st.columns([4, 2])
@@ -205,7 +213,7 @@ def render_stock_card(
 
         button_cols = st.columns(2 if show_add_to_watchlist and show_detail_button else 1)
         if show_add_to_watchlist:
-            if button_cols[0].button("⭐ Add to watchlist", key=f"fav_{ticker}", use_container_width=True):
+            if button_cols[0].button("⭐ Add to watchlist", key=f"fav_{ticker}_{unique_id}", use_container_width=True):
                 favorites_store.add(ticker)
                 st.success(f"{ticker} added to watchlist.")
 
@@ -213,7 +221,7 @@ def render_stock_card(
             detail_col = button_cols[1] if show_add_to_watchlist else button_cols[0]
             if detail_col.button(
                 "Go to detail page →",
-                key=f"detail_{ticker}",
+                key=f"detail_{ticker}_{unique_id}",
                 type="primary",
                 use_container_width=True,
             ):
@@ -314,6 +322,43 @@ if "detail_ticker" in st.session_state and st.session_state["detail_ticker"]:
     except ValueError as exc:
         st.error(str(exc))
         st.stop()
+
+    # News and sentiment
+    api_key = st.secrets.get("MARKETAUX_API_KEY", "").strip()
+    if not api_key:
+        st.info("Add MARKETAUX_API_KEY to .streamlit/secrets.toml to enable latest news and sentiment.")
+    else:
+        # Cache results per-ticker for 15 minutes to avoid slow repeated calls
+        @st.cache_data(ttl=900)
+        def _fetch_news(ticker: str) -> list:
+            client = MarketauxClient(api_key)
+            return client.fetch_news_for_ticker(ticker, limit=5)
+
+        try:
+            articles = _fetch_news(detail_ticker)
+        except Exception:
+            articles = []
+
+        with st.expander("Latest news & sentiment", expanded=True):
+            if not articles:
+                st.info("No recent news articles were found for this ticker.")
+            else:
+                for art in articles:
+                    title = art.get("title") or "Untitled"
+                    description = art.get("description") or art.get("snippet") or ""
+                    source = art.get("source", "")
+                    url = art.get("url") or art.get("link") or ""
+                    score = art.get("sentiment_score")
+                    label = art.get("sentiment_label")
+
+                    score_text = f"{score:.2f}" if isinstance(score, (int, float)) else "N/A"
+                    label_text = label or "N/A"
+
+                    st.markdown(f"**[{title}]({url})**")
+                    if description:
+                        st.caption(description)
+                    st.text(f"Source: {source} — Sentiment: {score_text} ({label_text})")
+                    st.write("---")
 
     st.title(f"{detail_snapshot['company_name']} ({detail_ticker})")
     st.caption(f"{detail_snapshot['sector']} / {detail_snapshot['industry']}")
