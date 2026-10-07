@@ -170,3 +170,48 @@ def test_favourite_list_round_trip(tmp_path):
     favorites.remove("MSFT")
 
     assert favorites.list() == ["AAPL"]
+
+
+def test_trade_engine_executes_buy_and_updates_cash_and_holdings():
+    from finance_dashboard.trading import TradeEngine
+
+    engine = TradeEngine()
+    cash_balance, holdings = engine.execute_order(
+        side="buy",
+        ticker="AAPL",
+        shares=5,
+        price=100.0,
+        cash_balance=100000.0,
+        holdings={},
+    )
+
+    assert cash_balance == pytest.approx(99500.0)
+    assert holdings["AAPL"]["shares"] == pytest.approx(5.0)
+    assert holdings["AAPL"]["avg_cost"] == pytest.approx(100.0)
+
+
+def test_trade_engine_executes_sell_and_rejects_duplicate_orders():
+    from finance_dashboard.trading import TradeEngine
+
+    engine = TradeEngine()
+    cash_balance, holdings = engine.execute_order(
+        side="sell",
+        ticker="AAPL",
+        shares=3,
+        price=120.0,
+        cash_balance=1000.0,
+        holdings={"AAPL": {"shares": 10.0, "avg_cost": 100.0}},
+    )
+
+    assert cash_balance == pytest.approx(1360.0)
+    assert holdings["AAPL"]["shares"] == pytest.approx(7.0)
+
+    with pytest.raises(ValueError, match="Duplicate trade rejected"):
+        engine.execute_order(
+            side="sell",
+            ticker="AAPL",
+            shares=3,
+            price=120.0,
+            cash_balance=1360.0,
+            holdings={"AAPL": {"shares": 7.0, "avg_cost": 100.0}},
+        )

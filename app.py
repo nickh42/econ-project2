@@ -13,6 +13,7 @@ from finance_dashboard.mongo_client import MongoDB
 from finance_dashboard.services.auth_service import AuthenticationService
 from finance_dashboard.stock_comparator import StockComparator
 from finance_dashboard.marketaux_client import MarketauxClient
+from finance_dashboard.trading import TradeEngine
 
 
 st.set_page_config(page_title="Finance Dashboard", layout="wide")
@@ -154,6 +155,157 @@ def build_sec_data_table(sec_data: dict) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def reset_trade_state() -> None:
+    for key in [
+        "trade_ticker",
+        "trade_side",
+        "trade_step",
+        "trade_shares",
+        "trade_order_ready",
+    ]:
+        st.session_state.pop(key, None)
+
+
+def render_trade_choice_dialog(ticker: str) -> None:
+    @st.dialog(f"Trade {ticker}")
+    def _trade_dialog() -> None:
+        st.write("Choose the order type.")
+        buy_col, sell_col = st.columns(2)
+        if buy_col.button("Buy", type="primary", use_container_width=True):
+            st.session_state["trade_ticker"] = ticker
+            st.session_state["trade_side"] = "buy"
+            st.session_state["trade_step"] = "order"
+            st.session_state["trade_shares"] = 1.0
+            st.rerun()
+        if sell_col.button("Sell", type="secondary", use_container_width=True):
+            st.session_state["trade_ticker"] = ticker
+            st.session_state["trade_side"] = "sell"
+            st.session_state["trade_step"] = "order"
+            st.session_state["trade_shares"] = 1.0
+            st.rerun()
+
+    _trade_dialog()
+
+
+def render_trade_order_page() -> None:
+    ticker = st.session_state.get("trade_ticker")
+    side = st.session_state.get("trade_side", "buy")
+    if not ticker:
+        return
+
+    default_start, default_end = get_default_range()
+    snapshot = controller.get_stock_snapshot(
+        ticker,
+        str(default_start.date()),
+        str(default_end.date()),
+    )
+    current_price = float(snapshot["current_price"])
+    user = st.session_state.user
+    available_cash = float(getattr(user, "cash_balance", 0.0))
+    owned_shares = float(st.session_state.portfolio_holdings.get(ticker, {}).get("shares", 0.0))
+
+    st.title(f"{side.title()} {ticker}")
+    st.caption(f"Current price: ${current_price:.2f}")
+
+    if st.button("Back to detail page", key=f"trade_back_{ticker}"):
+        st.session_state["detail_ticker"] = ticker
+        reset_trade_state()
+        st.rerun()
+    if st.button("Clear trade", key=f"clear_trade_{ticker}"):
+        reset_trade_state()
+        st.rerun()
+
+    shares = st.number_input(
+        "Number of Shares",
+        min_value=0.0,
+        value=float(st.session_state.get("trade_shares", 1.0)),
+        step=1.0,
+        key=f"trade_shares_input_{ticker}",
+    )
+    st.session_state["trade_shares"] = float(shares)
+
+    if side == "buy":
+        estimated_cost = shares * current_price
+        st.metric("Current Price", f"${current_price:.2f}")
+        st.metric("Available Cash", f"${available_cash:.2f}")
+        st.metric("Number of Shares", f"{shares:.0f}")
+        st.metric("Estimated Cost", f"${estimated_cost:.2f}")
+        if estimated_cost > available_cash:
+            st.error("Insufficient funds for this buy order.")
+        review_disabled = shares <= 0 or estimated_cost > available_cash
+        review_label = "Review Buy Order"
+    else:
+        estimated_value = shares * current_price
+        st.metric("Current Price", f"${current_price:.2f}")
+        st.metric("Shares Owned", f"{owned_shares:.2f}")
+        st.metric("Number of Shares", f"{shares:.0f}")
+        st.metric("Estimated Proceeds", f"${estimated_value:.2f}")
+        if shares > owned_shares:
+            st.error(f"You only own {owned_shares:.2f} shares of {ticker}.")
+        review_disabled = shares <= 0 or shares > owned_shares
+        review_label = "Review Sell Order"
+
+    if st.button(review_label, key=f"review_{side}_{ticker}", disabled=review_disabled, type="primary"):
+        st.session_state["trade_step"] = "review"
+        st.rerun()
+
+
+def render_trade_review_page() -> None:
+    ticker = st.session_state.get("trade_ticker")
+    side = st.session_state.get("trade_side", "buy")
+    if not ticker:
+        return
+
+    default_start, default_end = get_default_range()
+    snapshot = controller.get_stock_snapshot(
+        ticker,
+        str(default_start.date()),
+        str(default_end.date()),
+    )
+    current_price = float(snapshot["current_price"])
+    shares = float(st.session_state.get("trade_shares", 0.0))
+    order_total = shares * current_price
+    user = st.session_state.user
+
+    st.title(f"Review {side.title()} Order")
+    st.subheader(f"{side.title()} {ticker}")
+    st.write(f"Ticker: {ticker}")
+    st.write(f"Side: {side.title()}")
+    st.write(f"Current Price: ${current_price:.2f}")
+    st.write(f"Number of Shares: {shares:.2f}")
+    if side == "buy":
+        st.write(f"Estimated Cost: ${order_total:.2f}")
+        st.write(f"Available Cash After Order: ${float(user.cash_balance) - order_total:.2f}")
+    else:
+        st.write(f"Estimated Proceeds: ${order_total:.2f}")
+        st.write(f"Cash After Sale: ${float(user.cash_balance) + order_total:.2f}")
+
+    if st.button("Submit Order", key=f"submit_{side}_{ticker}", type="primary"):
+        trade_engine = TradeEngine(st.session_state.get("processed_trade_keys", set()))
+        try:
+            updated_cash, updated_holdings = trade_engine.execute_order(
+                side=side,
+                ticker=ticker,
+                shares=shares,
+                price=current_price,
+                cash_balance=float(user.cash_balance),
+                holdings=st.session_state.portfolio_holdings,
+            )
+            user.cash_balance = updated_cash
+            st.session_state.user = user
+            st.session_state.portfolio_holdings = updated_holdings
+            st.session_state["processed_trade_keys"] = trade_engine.processed_trade_keys
+            st.success(f"{side.title()} order submitted successfully for {ticker}.")
+            reset_trade_state()
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+
+    if st.button("Back to order form", key=f"back_to_order_{ticker}"):
+        st.session_state["trade_step"] = "order"
+        st.rerun()
+
+
 st.markdown(
     """
     <style>
@@ -231,6 +383,19 @@ def render_stock_card(
 
 if "user" not in st.session_state:
     st.session_state.user = None
+
+if "processed_trade_keys" not in st.session_state:
+    st.session_state.processed_trade_keys = set()
+
+if "trade_ticker" in st.session_state and st.session_state["trade_ticker"]:
+    if st.session_state.get("trade_side") is None:
+        render_trade_choice_dialog(st.session_state["trade_ticker"])
+        st.stop()
+    if st.session_state.get("trade_step") == "review":
+        render_trade_review_page()
+    else:
+        render_trade_order_page()
+    st.stop()
 
 if st.session_state.user is None:
     st.title("Trading Simulator")
@@ -426,6 +591,19 @@ if "detail_ticker" in st.session_state and st.session_state["detail_ticker"]:
             st.dataframe(pd.DataFrame(filings), use_container_width=True)
         else:
             st.info("No recent SEC filings were returned for this stock.")
+
+    trade_clicked = st.button(
+        "Trade",
+        key=f"trade_button_{detail_ticker}",
+        type="primary",
+        use_container_width=True,
+    )
+    if trade_clicked:
+        st.session_state["trade_ticker"] = detail_ticker
+        st.session_state.pop("trade_side", None)
+        st.session_state.pop("trade_step", None)
+        st.session_state["trade_shares"] = 1.0
+        st.rerun()
 
     st.stop()
 
