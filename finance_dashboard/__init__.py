@@ -1,5 +1,6 @@
 """Finance dashboard package."""
 
+from .ai_assistant import ask_groq_assistant, build_ai_prompt, contains_prediction_request, is_question_in_scope
 from .dashboard import Dashboard
 from .dashboard_controller import DashboardController
 from .favourite_list_of_stocks import FavouriteListOfStocks
@@ -12,4 +13,8 @@ __all__ = [
     "FavouriteListOfStocks",
     "StockComparator",
     "TradeEngine",
+    "ask_groq_assistant",
+    "build_ai_prompt",
+    "contains_prediction_request",
+    "is_question_in_scope",
 ]

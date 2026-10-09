@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from finance_dashboard.ai_assistant import ask_groq_assistant, contains_prediction_request, is_question_in_scope
 from finance_dashboard.dashboard_controller import DashboardController
 from finance_dashboard.favourite_list_of_stocks import FavouriteListOfStocks
 from finance_dashboard.mongo_client import MongoDB
@@ -33,6 +34,58 @@ def get_auth_service() -> AuthenticationService | None:
         return None
     mongo_db = MongoDB(mongo_uri)
     return AuthenticationService(mongo_db.user_repository)
+
+
+def get_assistant_settings() -> tuple[str, str]:
+    api_key = (
+        st.secrets.get("groq_api_key")
+        or st.secrets.get("GROQ_API_KEY")
+        or ""
+    ).strip()
+    model = "openai/gpt-oss-120b"
+    return api_key, model
+
+
+def render_ai_assistant(page_name: str, current_ticker: str | None, observed_data: dict, *, context_label: str = "") -> None:
+    with st.expander("Ask AI", expanded=False):
+        st.caption(
+            "Read-only guidance for stocks, SEC data, market news, and portfolio questions. "
+            "No predictions, trade execution, or actions are allowed."
+        )
+        key_name = f"{page_name}_{current_ticker or 'portfolio'}_{context_label or 'panel'}"
+        question = st.text_area(
+            "Ask a question",
+            key=f"ai_question_{key_name}",
+            value=st.session_state.get(f"ai_question_{key_name}", ""),
+            placeholder="Example: What does the current cash flow statement show?",
+            height=120,
+        )
+        st.session_state[f"ai_question_{key_name}"] = question
+
+        if st.button("Ask AI", key=f"ai_submit_{key_name}", use_container_width=True):
+            if not question.strip():
+                st.warning("Please enter a question.")
+            elif not is_question_in_scope(question):
+                st.info("I can only help with stock, SEC, news, and portfolio questions. Please ask about the current ticker, filings, market news, or your portfolio.")
+            elif contains_prediction_request(question):
+                st.info("I can explain the current information on this page, but I cannot make predictions or price forecasts.")
+            else:
+                api_key, model = get_assistant_settings()
+                if not api_key:
+                    st.info("Add groq_api_key to .streamlit/secrets.toml to enable Ask AI.")
+                else:
+                    try:
+                        answer = ask_groq_assistant(
+                            page_name=page_name,
+                            current_ticker=current_ticker,
+                            user_query=question,
+                            observed_data=observed_data,
+                            api_key=api_key,
+                            model=model,
+                        )
+                        st.markdown(answer)
+                    except ValueError as exc:
+                        st.error(str(exc))
 
 
 def render_metrics(summary: dict, ticker: str) -> None:
@@ -525,6 +578,26 @@ if "detail_ticker" in st.session_state and st.session_state["detail_ticker"]:
                     st.text(f"Source: {source} — Sentiment: {score_text} ({label_text})")
                     st.write("---")
 
+    stock_context = {
+        "ticker": detail_ticker,
+        "company_name": detail_snapshot["company_name"],
+        "current_price": detail_snapshot["current_price"],
+        "day_change": detail_snapshot["day_change"],
+        "daily_percent_change": detail_snapshot["daily_percent_change"],
+        "market_cap": detail_snapshot["market_cap"],
+        "sector": detail_snapshot["sector"],
+        "industry": detail_snapshot["industry"],
+        "recent_filings": detail_snapshot["recent_filings"],
+        "sec_financial_data": build_sec_data_table(detail_snapshot["sec_financial_data"]).to_dict(orient="records"),
+        "news": articles if api_key else [],
+    }
+    render_ai_assistant(
+        "stock_detail",
+        detail_ticker,
+        stock_context,
+        context_label="stock",
+    )
+
     st.title(f"{detail_snapshot['company_name']} ({detail_ticker})")
     st.caption(f"{detail_snapshot['sector']} / {detail_snapshot['industry']}")
 
@@ -663,6 +736,23 @@ for ticker, position in st.session_state.portfolio_holdings.items():
             "Market Value": shares * current_price,
         }
     )
+
+portfolio_context = {
+    "portfolio_summary": {
+        "cash": portfolio_snapshot["cash"],
+        "invested": portfolio_snapshot["invested"],
+        "total_value": portfolio_snapshot["total_value"],
+    },
+    "holdings": portfolio_rows,
+    "favorite_tickers": favorite_list,
+    "show_favorites_only": show_favorites_only,
+}
+render_ai_assistant(
+    "portfolio",
+    None,
+    portfolio_context,
+    context_label="portfolio",
+)
 
 if portfolio_rows:
     header_cols = st.columns((1.2, 1, 1.2, 1.2, 1.5))
