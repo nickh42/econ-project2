@@ -1,4 +1,4 @@
-from finance_dashboard.ai_assistant import build_ai_prompt, is_question_in_scope
+from finance_dashboard.ai_assistant import build_ai_prompt, is_question_in_scope, portfolio_has_holdings
 
 
 def test_build_ai_prompt_includes_stock_context_and_guardrails():
@@ -26,3 +26,8 @@ def test_build_ai_prompt_includes_stock_context_and_guardrails():
 def test_is_question_in_scope_rejects_unrelated_queries():
     assert is_question_in_scope("Can you write me a poem about the ocean?") is False
     assert is_question_in_scope("Explain the current portfolio and recent SEC filings for AAPL") is True
+
+
+def test_portfolio_has_holdings_handles_empty_portfolio():
+    assert portfolio_has_holdings({"holdings": []}) is False
+    assert portfolio_has_holdings({"holdings": [{"Ticker": "AAPL", "Shares": 2}]}) is True

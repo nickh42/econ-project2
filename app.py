@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from finance_dashboard.ai_assistant import ask_groq_assistant, contains_prediction_request, is_question_in_scope
+from finance_dashboard.ai_assistant import ask_groq_assistant, contains_prediction_request, is_question_in_scope, portfolio_has_holdings
 from finance_dashboard.dashboard_controller import DashboardController
 from finance_dashboard.favourite_list_of_stocks import FavouriteListOfStocks
 from finance_dashboard.mongo_client import MongoDB
@@ -52,23 +52,30 @@ def render_ai_assistant(page_name: str, current_ticker: str | None, observed_dat
             "Read-only guidance for stocks, SEC data, market news, and portfolio questions. "
             "No predictions, trade execution, or actions are allowed."
         )
-        key_name = f"{page_name}_{current_ticker or 'portfolio'}_{context_label or 'panel'}"
+
+        if page_name == "stock_detail":
+            widget_key = f"ask_ai_question_stock_{current_ticker or 'detail'}"
+            button_key = f"ask_ai_submit_stock_{current_ticker or 'detail'}"
+        else:
+            widget_key = "ask_ai_question_portfolio"
+            button_key = "ask_ai_submit_portfolio"
+
         question = st.text_area(
             "Ask a question",
-            key=f"ai_question_{key_name}",
-            value=st.session_state.get(f"ai_question_{key_name}", ""),
+            key=widget_key,
             placeholder="Example: What does the current cash flow statement show?",
             height=120,
         )
-        st.session_state[f"ai_question_{key_name}"] = question
 
-        if st.button("Ask AI", key=f"ai_submit_{key_name}", use_container_width=True):
+        if st.button("Ask AI", key=button_key, use_container_width=True):
             if not question.strip():
                 st.warning("Please enter a question.")
             elif not is_question_in_scope(question):
                 st.info("I can only help with stock, SEC, news, and portfolio questions. Please ask about the current ticker, filings, market news, or your portfolio.")
             elif contains_prediction_request(question):
                 st.info("I can explain the current information on this page, but I cannot make predictions or price forecasts.")
+            elif page_name == "portfolio" and not portfolio_has_holdings(observed_data):
+                st.info("No holdings are available yet. Add a stock to the portfolio before asking for portfolio insights.")
             else:
                 api_key, model = get_assistant_settings()
                 if not api_key:

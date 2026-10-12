@@ -7,6 +7,15 @@ from urllib import error, request
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
+def portfolio_has_holdings(observed_data: Dict[str, Any]) -> bool:
+    holdings = observed_data.get("holdings")
+    if isinstance(holdings, list):
+        return bool(holdings)
+    if isinstance(holdings, dict):
+        return bool(holdings)
+    return False
+
+
 def is_question_in_scope(user_question: str) -> bool:
     """Return True only for dashboard-relevant finance questions."""
     if not user_question or not user_question.strip():
@@ -144,7 +153,15 @@ def ask_groq_assistant(
             result = json.loads(response.read().decode("utf-8"))
     except error.HTTPError as exc:  # pragma: no cover - network-specific branch
         details = exc.read().decode("utf-8", errors="replace")
-        raise ValueError(f"Groq API request failed: {details}") from exc
+        cleaned = details.strip()
+        try:
+            payload = json.loads(cleaned)
+            message = payload.get("error", {}).get("message") or payload.get("message") or cleaned
+        except json.JSONDecodeError:
+            message = cleaned or "Groq rejected the request."
+        if exc.code == 1010:
+            raise ValueError("The current portfolio has no holdings to analyze yet. Add a stock or ask about a ticker with available data.") from exc
+        raise ValueError(f"The AI assistant could not process that request right now. {message}") from exc
     except error.URLError as exc:  # pragma: no cover - network-specific branch
         raise ValueError("The AI assistant could not reach Groq. Please try again later.") from exc
 
