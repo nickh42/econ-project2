@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-DEFAULT_MODEL = "openai/gpt-oss-20b"
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 
 class LLMClient:
@@ -25,7 +25,7 @@ class LLMClient:
             ) from error
 
         self._client = Groq(api_key=api_key.strip())
-        self.model = (model or self.DEFAULT_MODEL).strip()
+        self.model = (model or self.DEFAULT_MODEL).strip() or self.DEFAULT_MODEL
 
     def complete(self, messages: list[dict[str, str]]) -> str:
         response: Any = self._client.chat.completions.create(
@@ -170,4 +170,6 @@ def ask_groq_assistant(
     except ValueError:
         raise
     except Exception as exc:  # pragma: no cover - network-specific branch
-        raise ValueError("The AI assistant could not reach Groq. Please try again later.") from exc
+        raise ValueError(
+            f"The AI assistant could not reach Groq with model '{model}'. Check the API key and network connection, then try again later."
+        ) from exc

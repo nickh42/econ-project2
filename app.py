@@ -42,7 +42,12 @@ def get_assistant_settings() -> tuple[str, str]:
         or st.secrets.get("GROQ_API_KEY")
         or ""
     ).strip()
-    return api_key, DEFAULT_MODEL
+    model = (
+        st.secrets.get("groq_model")
+        or st.secrets.get("GROQ_MODEL")
+        or DEFAULT_MODEL
+    ).strip() or DEFAULT_MODEL
+    return api_key, model
 
 
 def render_ai_assistant(page_name: str, current_ticker: str | None, observed_data: dict, *, context_label: str = "") -> None:
