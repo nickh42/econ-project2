@@ -2,9 +2,42 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
-from urllib import error, request
 
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = "openai/gpt-oss-20b"
+
+
+class LLMClient:
+    """Thin Groq Chat Completions client."""
+
+    DEFAULT_MODEL = DEFAULT_MODEL
+
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL) -> None:
+        if not api_key or not api_key.strip():
+            raise ValueError(
+                "GROQ_API_KEY is missing. Add it to .streamlit/secrets.toml."
+            )
+
+        try:
+            from groq import Groq
+        except ImportError as error:
+            raise ValueError(
+                "The groq package is not installed. Run: pip install groq"
+            ) from error
+
+        self._client = Groq(api_key=api_key.strip())
+        self.model = (model or self.DEFAULT_MODEL).strip()
+
+    def complete(self, messages: list[dict[str, str]]) -> str:
+        response: Any = self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=700,
+        )
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("The LLM returned an empty response.")
+        return str(content).strip()
 
 
 def portfolio_has_holdings(observed_data: Dict[str, Any]) -> bool:
@@ -120,7 +153,7 @@ def ask_groq_assistant(
     model: str = DEFAULT_MODEL,
 ) -> str:
     """Send a read-only question to Groq and return the answer text."""
-    if not api_key:
+    if not api_key or not api_key.strip():
         raise ValueError("Add groq_api_key to .streamlit/secrets.toml to enable Ask AI.")
 
     if not is_question_in_scope(user_query):
@@ -130,47 +163,11 @@ def ask_groq_assistant(
         raise ValueError("I can explain the current information on this page, but I cannot make predictions or price forecasts.")
 
     prompt = build_ai_prompt(page_name, current_ticker, user_query, observed_data)
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "max_tokens": 500,
-    }
-
-    encoded = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        "https://api.groq.com/openai/v1/chat/completions",
-        data=encoded,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
+    client = LLMClient(api_key=api_key, model=model)
 
     try:
-        with request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:  # pragma: no cover - network-specific branch
-        details = exc.read().decode("utf-8", errors="replace")
-        cleaned = details.strip()
-        try:
-            payload = json.loads(cleaned)
-            message = payload.get("error", {}).get("message") or payload.get("message") or cleaned
-        except json.JSONDecodeError:
-            message = cleaned or "Groq rejected the request."
-        if exc.code == 1010:
-            raise ValueError("The current portfolio has no holdings to analyze yet. Add a stock or ask about a ticker with available data.") from exc
-        raise ValueError(f"The AI assistant could not process that request right now. {message}") from exc
-    except error.URLError as exc:  # pragma: no cover - network-specific branch
+        return client.complete([{"role": "user", "content": prompt}])
+    except ValueError:
+        raise
+    except Exception as exc:  # pragma: no cover - network-specific branch
         raise ValueError("The AI assistant could not reach Groq. Please try again later.") from exc
-
-    choices = result.get("choices", [])
-    if not choices:
-        raise ValueError("The AI assistant did not return a useful answer.")
-
-    message = choices[0].get("message", {})
-    content = message.get("content")
-    if isinstance(content, list):
-        return "".join(part.get("text", "") for part in content if isinstance(part, dict))
-    return str(content or "").strip()

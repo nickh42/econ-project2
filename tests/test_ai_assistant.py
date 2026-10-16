@@ -1,4 +1,4 @@
-from finance_dashboard.ai_assistant import build_ai_prompt, is_question_in_scope, portfolio_has_holdings
+from finance_dashboard.ai_assistant import LLMClient, build_ai_prompt, is_question_in_scope, portfolio_has_holdings
 
 
 def test_build_ai_prompt_includes_stock_context_and_guardrails():
@@ -31,3 +31,16 @@ def test_is_question_in_scope_rejects_unrelated_queries():
 def test_portfolio_has_holdings_handles_empty_portfolio():
     assert portfolio_has_holdings({"holdings": []}) is False
     assert portfolio_has_holdings({"holdings": [{"Ticker": "AAPL", "Shares": 2}]}) is True
+
+
+def test_llm_client_uses_supported_default_model_and_validates_api_key():
+    from finance_dashboard.ai_assistant import DEFAULT_MODEL
+
+    assert DEFAULT_MODEL == "openai/gpt-oss-20b"
+
+    try:
+        LLMClient(api_key="   ")
+    except ValueError as exc:
+        assert "missing" in str(exc).lower()
+    else:
+        raise AssertionError("Expected a ValueError for a blank Groq API key")

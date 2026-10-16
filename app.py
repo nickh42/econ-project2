@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from finance_dashboard.ai_assistant import ask_groq_assistant, contains_prediction_request, is_question_in_scope, portfolio_has_holdings
+from finance_dashboard.ai_assistant import DEFAULT_MODEL, ask_groq_assistant, contains_prediction_request, is_question_in_scope, portfolio_has_holdings
 from finance_dashboard.dashboard_controller import DashboardController
 from finance_dashboard.favourite_list_of_stocks import FavouriteListOfStocks
 from finance_dashboard.mongo_client import MongoDB
@@ -42,8 +42,7 @@ def get_assistant_settings() -> tuple[str, str]:
         or st.secrets.get("GROQ_API_KEY")
         or ""
     ).strip()
-    model = "openai/gpt-oss-120b"
-    return api_key, model
+    return api_key, DEFAULT_MODEL
 
 
 def render_ai_assistant(page_name: str, current_ticker: str | None, observed_data: dict, *, context_label: str = "") -> None:
