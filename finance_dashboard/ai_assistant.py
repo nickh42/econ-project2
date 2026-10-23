@@ -121,16 +121,93 @@ def contains_prediction_request(user_question: str) -> bool:
     return any(term in lowered for term in prediction_terms)
 
 
+def _summarize_prompt_value(value: Any, *, max_items: int = 8, max_string_length: int = 220) -> Any:
+    """Reduce large payloads to a compact, still-useful summary for LLM prompts."""
+    if isinstance(value, dict):
+        items = list(value.items())
+        limited_items = items[:max_items]
+        summarized: Dict[str, Any] = {}
+        for key, item in limited_items:
+            summarized[str(key)] = _summarize_prompt_value(
+                item,
+                max_items=max_items,
+                max_string_length=max_string_length,
+            )
+        if len(items) > max_items:
+            summarized["truncated"] = True
+            summarized["additional fields omitted"] = len(items) - max_items
+        return summarized
+
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+        limited = items[:max_items]
+        summarized_items = [
+            _summarize_prompt_value(
+                item,
+                max_items=max_items,
+                max_string_length=max_string_length,
+            )
+            for item in limited
+        ]
+        if len(items) > max_items:
+            summarized_items.append({"truncated": True, "additional items omitted": len(items) - max_items})
+        return summarized_items
+
+    if isinstance(value, str):
+        if len(value) > max_string_length:
+            return f"{value[: max_string_length - 3]}..."
+        return value
+
+    if isinstance(value, float):
+        if abs(value) > 1_000_000_000:
+            return round(value / 1_000_000_000, 3)
+        return value
+
+    if isinstance(value, (int, bool)) or value is None:
+        return value
+
+    text = str(value)
+    if len(text) > max_string_length:
+        return f"{text[: max_string_length - 3]}..."
+    return text
+
+
+def _collect_truncation_notes(value: Any, *, prefix: str = "") -> list[str]:
+    """Collect readable truncation markers from nested prompt summaries."""
+    notes: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(item, dict) and item.get("truncated") is True:
+                notes.append(f"{path}: additional fields omitted")
+            elif isinstance(item, list):
+                for nested in item:
+                    if isinstance(nested, dict) and nested.get("truncated") is True:
+                        notes.append(f"{path}: additional fields omitted")
+            notes.extend(_collect_truncation_notes(item, prefix=path))
+    elif isinstance(value, list):
+        for idx, item in enumerate(value):
+            path = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
+            if isinstance(item, dict) and item.get("truncated") is True:
+                notes.append(f"{path}: additional fields omitted")
+            notes.extend(_collect_truncation_notes(item, prefix=path))
+    return notes
+
+
 def build_ai_prompt(page_name: str, current_ticker: str | None, user_query: str, observed_data: Dict[str, Any]) -> str:
     """Build a strict prompt that limits the assistant to read-only finance answers."""
-    observed_snapshot = json.dumps(observed_data, ensure_ascii=False, default=str)
+    summarized_data = _summarize_prompt_value(observed_data)
+    truncation_notes = _collect_truncation_notes(summarized_data)
+    if truncation_notes:
+        summarized_data["truncation_summary"] = "; ".join(truncation_notes)
+    observed_snapshot = json.dumps({"summary": summarized_data, "truncated": True}, ensure_ascii=False, default=str)
     ticker_text = current_ticker or "No specific ticker selected"
     return (
         "You are a read-only finance assistant for a stock and portfolio dashboard. "
         "Use only the data shown on this page. Do not make up any additional facts.\n\n"
         f"Page: {page_name}\n"
         f"Current ticker: {ticker_text}\n"
-        f"Observed data: {observed_snapshot}\n\n"
+        f"Observed data summary: {observed_snapshot}\n\n"
         "Rules:\n"
         "- Answer only questions about stocks, SEC data, market news, portfolio holdings, or trade education.\n"
         "- Read-only mode: you cannot place trades, submit orders, or trigger any action.\n"

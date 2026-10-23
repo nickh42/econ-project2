@@ -33,6 +33,31 @@ def test_portfolio_has_holdings_handles_empty_portfolio():
     assert portfolio_has_holdings({"holdings": [{"Ticker": "AAPL", "Shares": 2}]}) is True
 
 
+def test_build_ai_prompt_summarizes_large_stock_context():
+    observed_data = {
+        "company_name": "Apple Inc.",
+        "current_price": 210.5,
+        "recent_filings": [{"form": f"10-Q-{idx}", "filing_date": "2024-01-01"} for idx in range(50)],
+        "news": [{"title": f"News {idx}", "source": "Reuters"} for idx in range(50)],
+        "sec_financial_data": {
+            "financials": {"2024": [float(idx) for idx in range(200)]},
+            "balance_sheet": {"2024": [float(idx) for idx in range(200)]},
+        },
+    }
+
+    prompt = build_ai_prompt(
+        page_name="Stock detail",
+        current_ticker="AAPL",
+        user_query="What does the current cash flow statement show?",
+        observed_data=observed_data,
+    )
+
+    assert "observed data summary" in prompt.lower()
+    assert "summary" in prompt.lower()
+    assert "truncated" in prompt.lower()
+    assert "additional fields omitted" in prompt.lower()
+
+
 def test_llm_client_uses_supported_default_model_and_validates_api_key():
     from finance_dashboard.ai_assistant import DEFAULT_MODEL
 
