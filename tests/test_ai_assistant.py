@@ -36,7 +36,7 @@ def test_portfolio_has_holdings_handles_empty_portfolio():
 def test_llm_client_uses_supported_default_model_and_validates_api_key():
     from finance_dashboard.ai_assistant import DEFAULT_MODEL
 
-    assert DEFAULT_MODEL == "llama-3.3-70b-versatile"
+    assert DEFAULT_MODEL == "openai/gpt-oss-120b"
 
     try:
         LLMClient(api_key="   ")
