@@ -149,6 +149,7 @@ def test_dashboard_controller_builds_stock_detail_payload():
     }
     controller.fetch_sec_financial_data = lambda ticker: {"Revenue": {"2024": 1000}}  # type: ignore[assignment]
     controller.fetch_recent_sec_filings = lambda ticker: [{"form": "10-K", "filing_date": "2024-01-30"}]  # type: ignore[assignment]
+    controller.fetch_edgar_data = lambda ticker: {"source": "EDGAR", "latest_filings": [{"form": "10-K", "link": "https://www.sec.gov"}]}  # type: ignore[assignment]
 
     detail = controller.get_stock_detail("AAPL", "2024-01-01", "2024-02-01")
 
@@ -159,6 +160,8 @@ def test_dashboard_controller_builds_stock_detail_payload():
     assert detail["historical_prices"]["Close"].iloc[-1] == pytest.approx(102.0)
     assert detail["daily_returns"].iloc[-1] == pytest.approx(0.03)
     assert detail["recent_filings"][0]["form"] == "10-K"
+    assert detail["edgar_data"]["source"] == "EDGAR"
+    assert detail["edgar_data"]["latest_filings"][0]["link"].startswith("https://")
 
 
 def test_favourite_list_round_trip(tmp_path):

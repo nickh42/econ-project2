@@ -599,6 +599,7 @@ if "detail_ticker" in st.session_state and st.session_state["detail_ticker"]:
         "sector": detail_snapshot["sector"],
         "industry": detail_snapshot["industry"],
         "recent_filings": detail_snapshot["recent_filings"],
+        "edgar_data": detail_snapshot.get("edgar_data", {}),
         "sec_financial_data": build_sec_data_table(detail_snapshot["sec_financial_data"]).to_dict(orient="records"),
         "news": articles if api_key else [],
     }

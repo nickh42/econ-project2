@@ -149,6 +149,47 @@ class DashboardController:
 
         return default_filings.get(normalized, [])
 
+    def fetch_edgar_data(self, ticker: str) -> Dict[str, Any]:
+        normalized = self.normalize_tickers([ticker])[0]
+        filings = self.fetch_recent_sec_filings(normalized)
+        summary: Dict[str, Any] = {
+            "source": "EDGAR",
+            "ticker": normalized,
+            "latest_filings": [
+                {
+                    "form": filing.get("form"),
+                    "filing_date": filing.get("filing_date"),
+                    "link": filing.get("link"),
+                }
+                for filing in filings[:3]
+            ],
+        }
+
+        try:
+            from sec_edgar_downloader import Downloader
+
+            with TemporaryDirectory() as temp_dir:
+                downloader = Downloader(temp_dir)
+                downloader.get("10-K", normalized, amount=1, after="2020-01-01", before=str(date.today().year))
+                filings_dir = Path(temp_dir) / normalized
+                if filings_dir.exists():
+                    snippets: List[Dict[str, Any]] = []
+                    for report in sorted(filings_dir.rglob("*.txt"))[:1]:
+                        text = report.read_text(errors="ignore")
+                        snippet = " ".join(text.split()[:250])
+                        snippets.append({
+                            "form": "10-K",
+                            "filing_date": report.name,
+                            "link": str(report),
+                            "snippet": snippet,
+                        })
+                    if snippets:
+                        summary["filing_snippets"] = snippets
+        except Exception:
+            pass
+
+        return summary
+
     def get_stock_snapshot(self, ticker: str, start_date: str, end_date: str) -> dict:
         normalized = self.normalize_tickers([ticker])[0]
         frame = self.fetch_stock_data(normalized, start_date, end_date)
@@ -200,6 +241,7 @@ class DashboardController:
             "volatility_series": volatility_data,
             "sec_financial_data": self.fetch_sec_financial_data(normalized),
             "recent_filings": self.fetch_recent_sec_filings(normalized),
+            "edgar_data": self.fetch_edgar_data(normalized),
         }
 
     def build_portfolio_snapshot(

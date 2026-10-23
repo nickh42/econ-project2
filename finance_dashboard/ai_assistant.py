@@ -211,6 +211,7 @@ def build_ai_prompt(page_name: str, current_ticker: str | None, user_query: str,
         "Rules:\n"
         "- Answer only questions about stocks, SEC data, market news, portfolio holdings, or trade education.\n"
         "- Read-only mode: you cannot place trades, submit orders, or trigger any action.\n"
+        "- If the observed data includes EDGAR filing links or snippets, treat those as the authoritative direct SEC source and use them for SEC questions.\n"
         "- You cannot make predictions, forecasts, price targets, or tell the user whether a stock will go up or down.\n"
         "- Do not provide trade recommendations or investment advice.\n"
         "- If the question is unrelated to stock, SEC, news, or portfolio analysis, respond with: 'I can only help with stock, SEC, news, and portfolio questions. Please ask about the current ticker, filings, market news, or your portfolio.'\n"
