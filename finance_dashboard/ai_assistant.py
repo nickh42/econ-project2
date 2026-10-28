@@ -49,7 +49,12 @@ def portfolio_has_holdings(observed_data: Dict[str, Any]) -> bool:
     return False
 
 
-def is_question_in_scope(user_question: str) -> bool:
+def is_question_in_scope(
+    user_question: str,
+    *,
+    page_name: str | None = None,
+    current_ticker: str | None = None,
+) -> bool:
     """Return True only for dashboard-relevant finance questions."""
     if not user_question or not user_question.strip():
         return False
@@ -70,6 +75,9 @@ def is_question_in_scope(user_question: str) -> bool:
     )
     if any(term in lowered for term in excluded_terms):
         return False
+
+    if page_name == "stock_detail" and current_ticker:
+        return True
 
     allowed_terms = (
         "stock",
@@ -194,9 +202,62 @@ def _collect_truncation_notes(value: Any, *, prefix: str = "") -> list[str]:
     return notes
 
 
+def _prioritize_query_matches(value: Any, user_query: str) -> Any:
+    """Keep matching financial rows near the front before prompt-size limits apply."""
+    ignored_terms = {
+        "about",
+        "can",
+        "does",
+        "for",
+        "from",
+        "give",
+        "me",
+        "tell",
+        "that",
+        "the",
+        "this",
+        "what",
+        "with",
+        "you",
+    }
+    query_terms = {
+        term.strip(".,?!:;()[]{}").lower()
+        for term in user_query.split()
+    } - ignored_terms
+    query_terms = {term for term in query_terms if len(term) > 2}
+
+    if isinstance(value, dict):
+        return {
+            key: _prioritize_query_matches(item, user_query)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+        if query_terms:
+            matching = [
+                item
+                for item in items
+                if any(
+                    term in json.dumps(item, ensure_ascii=False, default=str).lower()
+                    for term in query_terms
+                )
+            ]
+            if matching:
+                prioritized = matching + [item for item in items if item not in matching]
+                items = prioritized[:8]
+        return [
+            _prioritize_query_matches(item, user_query)
+            for item in items
+        ]
+
+    return value
+
+
 def build_ai_prompt(page_name: str, current_ticker: str | None, user_query: str, observed_data: Dict[str, Any]) -> str:
     """Build a strict prompt that limits the assistant to read-only finance answers."""
-    summarized_data = _summarize_prompt_value(observed_data)
+    relevant_data = _prioritize_query_matches(observed_data, user_query)
+    summarized_data = _summarize_prompt_value(relevant_data)
     truncation_notes = _collect_truncation_notes(summarized_data)
     if truncation_notes:
         summarized_data["truncation_summary"] = "; ".join(truncation_notes)
@@ -212,11 +273,12 @@ def build_ai_prompt(page_name: str, current_ticker: str | None, user_query: str,
         "- Answer only questions about stocks, SEC data, market news, portfolio holdings, or trade education.\n"
         "- Read-only mode: you cannot place trades, submit orders, or trigger any action.\n"
         "- If the observed data includes EDGAR filing links or snippets, treat those as the authoritative direct SEC source and use them for SEC questions.\n"
+        "- You may explain the general meaning of financial terms using standard financial knowledge, but do not claim a company-specific value unless it appears in the observed data.\n"
         "- You cannot make predictions, forecasts, price targets, or tell the user whether a stock will go up or down.\n"
         "- Do not provide trade recommendations or investment advice.\n"
         "- If the question is unrelated to stock, SEC, news, or portfolio analysis, respond with: 'I can only help with stock, SEC, news, and portfolio questions. Please ask about the current ticker, filings, market news, or your portfolio.'\n"
         "- If the user asks about trade concepts, explain them educationally without recommending a specific buy or sell.\n"
-        "- Use the actual values from the provided data and keep the explanation concise and actionable.\n\n"
+        "- Use matching observed financial data when available. If it is unavailable, say so and distinguish a general definition from company-specific facts.\n\n"
         f"User question: {user_query}"
     )
 
@@ -234,7 +296,11 @@ def ask_groq_assistant(
     if not api_key or not api_key.strip():
         raise ValueError("Add groq_api_key to .streamlit/secrets.toml to enable Ask AI.")
 
-    if not is_question_in_scope(user_query):
+    if not is_question_in_scope(
+        user_query,
+        page_name=page_name,
+        current_ticker=current_ticker,
+    ):
         raise ValueError("I can only help with stock, SEC, news, and portfolio questions. Please ask about the current ticker, filings, market news, or your portfolio.")
 
     if contains_prediction_request(user_query):

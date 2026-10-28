@@ -102,13 +102,6 @@ class DashboardController:
             if frame is not None and hasattr(frame, "empty") and not frame.empty:
                 financial_data[key] = frame
 
-        if not financial_data:
-            financial_data = {
-                "financials": pd.DataFrame({"2024": [1000.0]}),
-                "balance_sheet": pd.DataFrame({"2024": [500.0]}),
-                "cashflow": pd.DataFrame({"2024": [200.0]}),
-            }
-
         return financial_data
 
     def fetch_recent_sec_filings(self, ticker: str) -> List[Dict[str, Any]]:
@@ -227,6 +220,9 @@ class DashboardController:
         return_data = StockComparator.daily_returns(close_values)
         volatility_data = StockComparator.volatility_over_time({normalized: frame})[normalized]
 
+        sec_financial_data = self.fetch_sec_financial_data(normalized)
+        edgar_data = self.fetch_edgar_data(normalized)
+
         return {
             "ticker": normalized,
             "company_name": profile["company_name"],
@@ -239,9 +235,9 @@ class DashboardController:
             "historical_prices": historical,
             "daily_returns": return_data,
             "volatility_series": volatility_data,
-            "sec_financial_data": self.fetch_sec_financial_data(normalized),
-            "recent_filings": self.fetch_recent_sec_filings(normalized),
-            "edgar_data": self.fetch_edgar_data(normalized),
+            "sec_financial_data": sec_financial_data,
+            "recent_filings": edgar_data.get("latest_filings", []),
+            "edgar_data": edgar_data,
         }
 
     def build_portfolio_snapshot(

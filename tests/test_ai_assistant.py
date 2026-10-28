@@ -26,6 +26,36 @@ def test_build_ai_prompt_includes_stock_context_and_guardrails():
 def test_is_question_in_scope_rejects_unrelated_queries():
     assert is_question_in_scope("Can you write me a poem about the ocean?") is False
     assert is_question_in_scope("Explain the current portfolio and recent SEC filings for AAPL") is True
+    assert is_question_in_scope("Can you tell me about Tax Rate For Calcs") is False
+    assert is_question_in_scope(
+        "Can you tell me about Tax Rate For Calcs",
+        page_name="stock_detail",
+        current_ticker="AAPL",
+    ) is True
+
+
+def test_build_ai_prompt_prioritizes_sec_facts_matching_question():
+    facts = [
+        {"label": f"Revenue item {idx}", "value": idx}
+        for idx in range(10)
+    ]
+    facts.append(
+        {
+            "label": "Effective Income Tax Rate Continuing Operations",
+            "value": 0.24,
+            "period": "2024",
+        }
+    )
+
+    prompt = build_ai_prompt(
+        page_name="Stock detail",
+        current_ticker="AAPL",
+        user_query="Can you tell me about Tax Rate For Calcs?",
+        observed_data={"sec_financial_data": facts},
+    )
+
+    assert "Effective Income Tax Rate Continuing Operations" in prompt
+    assert "0.24" in prompt
 
 
 def test_portfolio_has_holdings_handles_empty_portfolio():

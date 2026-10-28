@@ -74,7 +74,11 @@ def render_ai_assistant(page_name: str, current_ticker: str | None, observed_dat
         if st.button("Ask AI", key=button_key, use_container_width=True):
             if not question.strip():
                 st.warning("Please enter a question.")
-            elif not is_question_in_scope(question):
+            elif not is_question_in_scope(
+                question,
+                page_name=page_name,
+                current_ticker=current_ticker,
+            ):
                 st.info("I can only help with stock, SEC, news, and portfolio questions. Please ask about the current ticker, filings, market news, or your portfolio.")
             elif contains_prediction_request(question):
                 st.info("I can explain the current information on this page, but I cannot make predictions or price forecasts.")
