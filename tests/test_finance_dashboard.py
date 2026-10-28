@@ -168,6 +168,8 @@ def test_favourite_list_round_trip(tmp_path):
     storage = tmp_path / "favorites.json"
     favorites = FavouriteListOfStocks(str(storage))
 
+    assert favorites.list() == []
+
     favorites.add("AAPL")
     favorites.add("MSFT")
     favorites.remove("MSFT")
