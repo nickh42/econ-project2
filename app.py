@@ -543,7 +543,6 @@ if st.session_state.user is None:
                 except ValueError as exc:
                     st.error(str(exc))
 
-    st.info("Use the MongoDB connection string stored in .streamlit/secrets.toml to persist user accounts.")
     st.stop()
 
 if "portfolio_holdings" not in st.session_state:
