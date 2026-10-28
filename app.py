@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import timedelta
-from pathlib import Path
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -9,7 +9,6 @@ import streamlit as st
 
 from finance_dashboard.ai_assistant import DEFAULT_MODEL, ask_groq_assistant, contains_prediction_request, is_question_in_scope, portfolio_has_holdings
 from finance_dashboard.dashboard_controller import DashboardController
-from finance_dashboard.favourite_list_of_stocks import FavouriteListOfStocks
 from finance_dashboard.mongo_client import MongoDB
 from finance_dashboard.services.auth_service import AuthenticationService
 from finance_dashboard.stock_comparator import StockComparator
@@ -23,7 +22,6 @@ st.set_page_config(page_title="Finance Dashboard", layout="wide")
 _render_card_counter = 0
 
 controller = DashboardController()
-favorites_store = FavouriteListOfStocks(Path("favorites.json"))
 
 DEFAULT_HOLDINGS: dict[str, dict[str, float]] = {}
 
@@ -34,6 +32,13 @@ def get_auth_service() -> AuthenticationService | None:
         return None
     mongo_db = MongoDB(mongo_uri)
     return AuthenticationService(mongo_db.user_repository)
+
+
+def persist_user(user) -> None:
+    service = get_auth_service()
+    if service is None:
+        raise ValueError("Add your MongoDB URI to .streamlit/secrets.toml to save account changes.")
+    service.repository.update(user)
 
 
 def get_assistant_settings() -> tuple[str, str]:
@@ -349,7 +354,7 @@ def render_trade_review_page() -> None:
         st.write(f"Cash After Sale: ${float(user.cash_balance) + order_total:.2f}")
 
     if st.button("Submit Order", key=f"submit_{side}_{ticker}", type="primary"):
-        trade_engine = TradeEngine(st.session_state.get("processed_trade_keys", set()))
+        trade_engine = TradeEngine(set(st.session_state.get("processed_trade_keys", set())))
         try:
             updated_cash, updated_holdings = trade_engine.execute_order(
                 side=side,
@@ -359,15 +364,31 @@ def render_trade_review_page() -> None:
                 cash_balance=float(user.cash_balance),
                 holdings=st.session_state.portfolio_holdings,
             )
-            user.cash_balance = updated_cash
-            st.session_state.user = user
-            st.session_state.portfolio_holdings = updated_holdings
+            trade = {
+                "side": side,
+                "ticker": ticker.strip().upper(),
+                "shares": shares,
+                "price": current_price,
+                "total": order_total,
+                "executed_at": datetime.now(timezone.utc),
+            }
+            updated_user = replace(
+                user,
+                cash_balance=updated_cash,
+                holdings=updated_holdings,
+                trades=[*user.trades, trade],
+            )
+            persist_user(updated_user)
+            st.session_state.user = updated_user
+            st.session_state.portfolio_holdings = updated_user.holdings
             st.session_state["processed_trade_keys"] = trade_engine.processed_trade_keys
             st.success(f"{side.title()} order submitted successfully for {ticker}.")
             reset_trade_state()
             st.rerun()
-        except ValueError as exc:
+        except (ValueError, LookupError) as exc:
             st.error(str(exc))
+        except Exception as exc:
+            st.error(f"Unable to save the trade to MongoDB: {exc}")
 
     if st.button("Back to order form", key=f"back_to_order_{ticker}"):
         st.session_state["trade_step"] = "order"
@@ -434,8 +455,21 @@ def render_stock_card(
         button_cols = st.columns(2 if show_add_to_watchlist and show_detail_button else 1)
         if show_add_to_watchlist:
             if button_cols[0].button("⭐ Add to watchlist", key=f"fav_{ticker}_{unique_id}", use_container_width=True):
-                favorites_store.add(ticker)
-                st.success(f"{ticker} added to watchlist.")
+                user = st.session_state.user
+                normalized_ticker = ticker.strip().upper()
+                if normalized_ticker not in user.favorites:
+                    updated_user = replace(
+                        user,
+                        favorites=[*user.favorites, normalized_ticker],
+                    )
+                    try:
+                        persist_user(updated_user)
+                    except Exception as exc:
+                        st.error(f"Unable to save {normalized_ticker} to MongoDB: {exc}")
+                    else:
+                        st.session_state.user = updated_user
+                        st.session_state.favorite_tickers = updated_user.favorites
+                        st.success(f"{normalized_ticker} added to watchlist.")
 
         if show_detail_button:
             detail_col = button_cols[1] if show_add_to_watchlist else button_cols[0]
@@ -516,11 +550,20 @@ if "portfolio_holdings" not in st.session_state:
     st.session_state.portfolio_holdings = {}
 
 user = st.session_state.user
+if st.session_state.get("active_user_username") != user.username:
+    st.session_state.active_user_username = user.username
+    st.session_state.portfolio_holdings = user.holdings
+    st.session_state.favorite_tickers = user.favorites
+    st.session_state.processed_trade_keys = set()
 st.title("Finance Dashboard")
 st.subheader(f"Profile: {user.username}")
 
 if st.button("Log out"):
     st.session_state.user = None
+    st.session_state.pop("active_user_username", None)
+    st.session_state.pop("portfolio_holdings", None)
+    st.session_state.pop("favorite_tickers", None)
+    st.session_state.pop("processed_trade_keys", None)
     st.session_state.pop("detail_ticker", None)
     st.session_state.pop("search_snapshot", None)
     st.rerun()
@@ -734,7 +777,7 @@ if "search_snapshot" in st.session_state:
     render_stock_card(snapshot["ticker"], snapshot, show_add_to_watchlist=True, show_detail_button=True)
 
 st.subheader("Holdings")
-favorite_list = favorites_store.list()
+favorite_list = st.session_state.favorite_tickers
 show_favorites_only = st.checkbox("Filter by favourites", value=False)
 portfolio_rows = []
 for ticker, position in st.session_state.portfolio_holdings.items():

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -10,6 +10,9 @@ class User:
     username: str
     password: str
     cash_balance: float = 100000.0
+    holdings: dict[str, dict[str, float]] = field(default_factory=dict)
+    favorites: list[str] = field(default_factory=list)
+    trades: list[dict[str, Any]] = field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     _id: Optional[str] = field(default=None, repr=False)

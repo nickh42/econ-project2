@@ -1,5 +1,6 @@
 import pytest
 
+from finance_dashboard.repositories.user_repository import UserRepository
 from finance_dashboard.services.auth_service import AuthenticationService
 from finance_dashboard.user import User
 
@@ -19,6 +20,56 @@ class FakeUserRepository:
 class FakeMongoClient:
     def __init__(self):
         self.user_repository = FakeUserRepository()
+
+
+class FakeCollection:
+    def __init__(self):
+        self.documents = []
+
+    def find_one(self, query):
+        return next(
+            (document for document in self.documents if document["username"] == query["username"]),
+            None,
+        )
+
+    def insert_one(self, document):
+        stored = {**document, "_id": "test-user-id"}
+        self.documents.append(stored)
+        return type("InsertResult", (), {"inserted_id": stored["_id"]})()
+
+    def update_one(self, query, update):
+        document = self.find_one(query)
+        if document is None:
+            return type("UpdateResult", (), {"matched_count": 0})()
+        document.update(update["$set"])
+        return type("UpdateResult", (), {"matched_count": 1})()
+
+
+def test_user_repository_persists_cash_holdings_favorites_and_trades():
+    repository = UserRepository(FakeCollection())
+    user = User(username="user@example.com", password="hashed-password")
+    repository.create(user)
+
+    user.cash_balance = 97500.0
+    user.holdings = {"AAPL": {"shares": 5.0, "avg_cost": 500.0}}
+    user.favorites = ["AAPL"]
+    user.trades = [
+        {
+            "side": "buy",
+            "ticker": "AAPL",
+            "shares": 5.0,
+            "price": 500.0,
+            "total": 2500.0,
+        }
+    ]
+    repository.update(user)
+
+    restored_user = repository.find_by_username("user@example.com")
+    assert restored_user is not None
+    assert restored_user.cash_balance == 97500.0
+    assert restored_user.holdings == {"AAPL": {"shares": 5.0, "avg_cost": 500.0}}
+    assert restored_user.favorites == ["AAPL"]
+    assert restored_user.trades == user.trades
 
 
 def test_register_user_with_valid_email_and_matching_passwords():
