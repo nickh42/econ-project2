@@ -220,3 +220,93 @@ def test_trade_engine_executes_sell_and_rejects_duplicate_orders():
             cash_balance=1360.0,
             holdings={"AAPL": {"shares": 7.0, "avg_cost": 100.0}},
         )
+
+
+def test_stock_direction_features_align_news_at_or_before_each_trading_close():
+    from finance_dashboard.stock_direction_predictor import StockDirectionPredictor
+
+    trading_days = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"])
+    prices = pd.DataFrame(
+        {"Close": [100.0, 101.0, 102.0], "Volume": [1000, 1100, 1200]},
+        index=trading_days,
+    )
+    articles = [
+        {"published_at": "2024-01-02T20:30:00Z", "sentiment_score": 0.6},
+        {"published_at": "2024-01-02T22:00:00Z", "sentiment_score": -0.5},
+        {"published_at": "2024-01-04T22:00:00Z", "sentiment_score": 1.0},
+    ]
+
+    features, target, sentiment_available = StockDirectionPredictor.build_features(prices, articles)
+
+    assert sentiment_available is True
+    assert features.loc["2024-01-02", "Daily_sentiment_mean"] == pytest.approx(0.6)
+    assert features.loc["2024-01-02", "News_article_count"] == 1
+    assert features.loc["2024-01-03", "Daily_sentiment_mean"] == pytest.approx(-0.5)
+    assert features.loc["2024-01-03", "News_article_count"] == 1
+    assert features.loc["2024-01-04", "News_article_count"] == 0
+    assert target.loc["2024-01-02"] == 1
+    assert pd.isna(target.iloc[-1])
+
+
+def test_stock_direction_prediction_uses_price_only_fallback_and_chronological_split():
+    import numpy as np
+
+    from finance_dashboard.stock_direction_predictor import StockDirectionPredictor
+
+    rng = np.random.default_rng(42)
+    returns = rng.normal(0.0005, 0.015, size=240)
+    close = 100 * np.cumprod(1 + returns)
+    prices = pd.DataFrame(
+        {
+            "Close": close,
+            "Volume": rng.integers(100_000, 1_000_000, size=len(close)),
+        },
+        index=pd.bdate_range("2024-01-02", periods=len(close)),
+    )
+
+    result = StockDirectionPredictor().predict(prices)
+
+    assert result["direction"] in {"UP", "DOWN"}
+    assert 0.0 <= result["probability"] <= 1.0
+    assert result["sentiment_available"] is False
+    assert result["training_observations"] >= 60
+    assert result["validation_start"] < result["feature_date"]
+
+
+def test_marketaux_client_fetches_date_bounded_historical_sentiment(monkeypatch):
+    from finance_dashboard.marketaux_client import MarketauxClient
+
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "data": [
+                    {
+                        "published_at": "2024-01-02T15:00:00Z",
+                        "entities": [
+                            {"symbol": "AAPL", "sentiment_score": 0.0},
+                        ],
+                    }
+                ]
+            }
+
+    def fake_get(url, *, params, timeout):
+        captured.update(params)
+        return Response()
+
+    monkeypatch.setattr("finance_dashboard.marketaux_client.requests.get", fake_get)
+
+    articles = MarketauxClient("test-key").fetch_historical_news_for_ticker(
+        "AAPL",
+        "2024-01-01",
+        "2024-01-03",
+    )
+
+    assert captured["published_after"] == "2024-01-01"
+    assert captured["published_before"] == "2024-01-03"
+    assert captured["limit"] == 100
+    assert articles[0]["sentiment_score"] == 0.0

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 
 from finance_dashboard.ai_assistant import DEFAULT_MODEL, ask_groq_assistant, contains_prediction_request, is_question_in_scope, portfolio_has_holdings
@@ -13,6 +14,7 @@ from finance_dashboard.mongo_client import MongoDB
 from finance_dashboard.services.auth_service import AuthenticationService
 from finance_dashboard.stock_comparator import StockComparator
 from finance_dashboard.marketaux_client import MarketauxClient
+from finance_dashboard.stock_direction_predictor import StockDirectionPredictor
 from finance_dashboard.trading import TradeEngine
 
 
@@ -22,6 +24,37 @@ st.set_page_config(page_title="Finance Dashboard", layout="wide")
 _render_card_counter = 0
 
 controller = DashboardController()
+direction_predictor = StockDirectionPredictor()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def predict_stock_direction(ticker: str, api_key: str, as_of_date: str) -> dict:
+    end_date = pd.Timestamp(as_of_date)
+    start_date = end_date - pd.DateOffset(years=5)
+    start = str(start_date.date())
+    end = str(end_date.date())
+    prices = controller.fetch_stock_data(ticker, start, end)
+
+    articles = []
+    sentiment_error = None
+    if api_key:
+        try:
+            articles = MarketauxClient(api_key).fetch_historical_news_for_ticker(
+                ticker,
+                start,
+                end,
+            )
+        except (requests.RequestException, ValueError) as exc:
+            sentiment_error = (
+                "Historical news could not be retrieved "
+                f"({type(exc).__name__})."
+            )
+    else:
+        sentiment_error = "Historical news sentiment is unavailable because no Marketaux API key is configured."
+
+    result = direction_predictor.predict(prices, articles)
+    result["sentiment_error"] = sentiment_error
+    return result
 
 DEFAULT_HOLDINGS: dict[str, dict[str, float]] = {}
 
@@ -666,6 +699,54 @@ if "detail_ticker" in st.session_state and st.session_state["detail_ticker"]:
     with col_right:
         st.metric("Daily % change", f"{detail_snapshot['daily_percent_change']:+.2%}")
         st.metric("Sector / industry", f"{detail_snapshot['sector']} / {detail_snapshot['industry']}")
+
+    prediction_clicked = st.button(
+        "Predict Tomorrow's Direction",
+        key=f"predict_direction_{detail_ticker}",
+        use_container_width=True,
+    )
+    if prediction_clicked:
+        prediction_key = "stock_direction_prediction"
+        st.session_state.pop(prediction_key, None)
+        with st.spinner(f"Training a direction model for {detail_ticker}..."):
+            try:
+                prediction = predict_stock_direction(
+                    detail_ticker,
+                    st.secrets.get("MARKETAUX_API_KEY", "").strip(),
+                    str(pd.Timestamp.today().normalize().date()),
+                )
+            except Exception as exc:
+                st.error(f"Unable to generate a stock direction prediction: {exc}")
+            else:
+                st.session_state[prediction_key] = {
+                    "ticker": detail_ticker,
+                    "result": prediction,
+                }
+
+    saved_prediction = st.session_state.get("stock_direction_prediction")
+    if saved_prediction and saved_prediction["ticker"] == detail_ticker:
+        prediction = saved_prediction["result"]
+        probability = prediction["probability"]
+        if prediction["direction"] == "UP":
+            st.success(f"⬆️ UP — {probability:.1%} probability")
+        else:
+            st.error(f"⬇️ DOWN — {probability:.1%} probability")
+        st.caption(
+            f"Based on {prediction['training_observations']} historical trading days; "
+            f"chronological holdout accuracy: {prediction['validation_accuracy']:.1%}."
+        )
+        if prediction["sentiment_available"]:
+            st.caption("Historical Marketaux sentiment was included in the model.")
+        elif prediction["sentiment_error"]:
+            st.warning(
+                f"{prediction['sentiment_error']} The model used price and technical "
+                "features only."
+            )
+        else:
+            st.warning(
+                "No historical sentiment articles were available. The model used "
+                "price and technical features only."
+            )
 
     with st.expander("Historical price graph", expanded=True):
         historical = detail_snapshot["historical_prices"]["Close"].dropna()
