@@ -2,20 +2,6 @@
 
 This educational Streamlit application lets users research real stock data and simulate investing with virtual cash, without using a brokerage or risking real money. It combines financial data integrations, account and portfolio workflows, an on-demand machine-learning experiment, and a read-only generative-AI assistant.
 
-## Application Screenshots
-
-There are no application screenshots in the repository yet. Capture and add screenshots of these screens before linking them here:
-
-- Stock search results and the dashboard
-- Stock detail page with historical price, returns, volatility, and available research panels
-- Buy and sell order flow, including the review step
-- Portfolio holdings and virtual cash
-- AI assistant response
-- Stock direction prediction result
-
-Suggested location after capturing: `docs/screenshots/`. Use genuine screenshots from a running application, and avoid including credentials, account details, or other private information.
-
-
 ## Key Features
 
 ### Stock Research
@@ -24,17 +10,29 @@ Suggested location after capturing: `docs/screenshots/`. Use genuine screenshots
 - View company name, market capitalization, sector, and industry when provided by the market-data source.
 - Select a date range and view historical closing prices, daily returns, and a rolling volatility series.
 
+![Stock search results](docs/screenshots/search.png)
+
+*Search for a ticker and review its price and daily return before opening the stock detail page.*
+
 ### SEC and Company Financial Research
 
 - The detail page displays financial-statement data exposed through yfinance's company data interface.
 - The application reads filing metadata from yfinance when available. A 10-K retrieval path using `sec-edgar-downloader` is present, but the current downloader initialization does not supply the required company and email arguments, and its errors are suppressed; downloaded filing text is therefore not reliable in the current version.
 - The application does not implement a general SEC XBRL financial-facts browser, and its financial-statement tables should not be described as direct SEC XBRL data. Some symbols may show static fallback filing examples rather than current SEC filings.
 
+![Historical prices and SEC data](docs/screenshots/historical%20prices.png)
+
+*Stock detail page with a historical price graph and expandable SEC financial data and recent filing panels.*
+
 ### News and Sentiment
 
 - The detail page can show recent ticker-associated news and the sentiment score/label returned or derived from Marketaux article data.
 - Historical news can be requested for the direction model when a Marketaux API key is configured.
 - The news panel is optional and depends on API access and returned coverage.
+
+![News and sentiment](docs/screenshots/news.png)
+
+*Recent company-related financial news with ticker-specific sentiment information.*
 
 ### Paper Trading
 
@@ -44,6 +42,20 @@ Suggested location after capturing: `docs/screenshots/`. Use genuine screenshots
 - Persist successful trades, updated cash, and updated holdings with the account.
 - No brokerage is connected and no real money or securities are involved.
 
+#### Paper Trading Flow
+
+1. **Start Trade** — The Trade action allows users to choose between simulated Buy and Sell orders.
+
+   ![Choose a simulated trade](docs/screenshots/trading.png)
+
+2. **Enter Buy Order** — Users select the number of shares while viewing the estimated order cost and available virtual cash.
+
+   ![Enter a buy order](docs/screenshots/buy.png)
+
+3. **Review Order** — Orders are reviewed before execution so users can verify the ticker, quantity, estimated price, and total simulated cost.
+
+   ![Review a buy order](docs/screenshots/review_order.png)
+
 ### Portfolio
 
 - Store holdings with share quantities and average purchase prices.
@@ -51,6 +63,14 @@ Suggested location after capturing: `docs/screenshots/`. Use genuine screenshots
 - Add stocks to a persistent favorites list.
 - Trade records are stored with the account, but the current UI does not provide a transaction-history screen.
 - The portfolio's displayed invested value is based on average purchase cost. It is not a live mark-to-market valuation and does not calculate unrealized profit or loss.
+
+![Favourite stocks](docs/screenshots/favorites.png)
+
+*The favorites view shows a saved ticker with its latest price, daily return, and a link to its detail page.*
+
+![Portfolio holdings](docs/screenshots/holdings.png)
+
+*Holdings show ticker, share count, average cost, market price, and market value, alongside available cash and portfolio summary amounts.*
 
 ### Machine Learning
 
@@ -60,11 +80,19 @@ Suggested location after capturing: `docs/screenshots/`. Use genuine screenshots
 - Uses a five-minute Streamlit cache to avoid repeating the same fetch and training work immediately.
 - This is an experimental classification feature, not a financial forecast or investment recommendation.
 
+![Next-trading-day direction prediction](docs/screenshots/prediction.png)
+
+*On-demand Random Forest classification of the next trading-day direction, with model probability and chronological holdout accuracy; predictions are uncertain and are not financial advice.*
+
 ### AI Assistant
 
 - A Groq-powered assistant answers read-only questions about the selected stock or portfolio context.
 - The prompt is built from data already available to the application, such as company information, current price and daily change, filings, SEC/company statement data, recent news, and portfolio information.
 - The assistant is restricted from placing trades, giving trade recommendations, or making price predictions.
+
+![AI assistant portfolio response](docs/screenshots/AI.png)
+
+*Read-only AI response using portfolio context, including cash, invested amount, holdings, and favorites.*
 
 ## Technology Stack
 
