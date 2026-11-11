@@ -2,19 +2,6 @@
 
 This educational Streamlit application lets users research real stock data and simulate investing with virtual cash, without using a brokerage or risking real money. It combines financial data integrations, account and portfolio workflows, an on-demand machine-learning experiment, and a read-only generative-AI assistant.
 
-## Application Screenshots
-
-There are no application screenshots in the repository yet. Capture and add screenshots of these screens before linking them here:
-
-- Stock search results and the dashboard
-- Stock detail page with historical price, returns, volatility, and available research panels
-- Buy and sell order flow, including the review step
-- Portfolio holdings and virtual cash
-- AI assistant response
-- Stock direction prediction result
-
-Suggested location after capturing: `docs/screenshots/`. Use genuine screenshots from a running application, and avoid including credentials, account details, or other private information.
-
 ## Key Features
 
 ### Stock Research
