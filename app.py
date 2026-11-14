@@ -464,6 +464,7 @@ def render_stock_card(
     snapshot: dict,
     *,
     show_add_to_watchlist: bool = True,
+    show_remove_favorite: bool = False,
     show_detail_button: bool = True,
 ) -> None:
     global _render_card_counter
@@ -485,9 +486,11 @@ def render_stock_card(
 
         st.caption(f"Last price: ${snapshot['current_price']:.2f} | Change: ${snapshot['day_change']:+.2f}")
 
-        button_cols = st.columns(2 if show_add_to_watchlist and show_detail_button else 1)
+        button_count = sum((show_add_to_watchlist, show_remove_favorite, show_detail_button))
+        button_cols = st.columns(button_count)
+        button_index = 0
         if show_add_to_watchlist:
-            if button_cols[0].button("⭐ Add to watchlist", key=f"fav_{ticker}_{unique_id}", use_container_width=True):
+            if button_cols[button_index].button("⭐ Add to favorites", key=f"fav_{ticker}_{unique_id}", use_container_width=True):
                 user = st.session_state.user
                 normalized_ticker = ticker.strip().upper()
                 if normalized_ticker not in user.favorites:
@@ -502,11 +505,37 @@ def render_stock_card(
                     else:
                         st.session_state.user = updated_user
                         st.session_state.favorite_tickers = updated_user.favorites
-                        st.success(f"{normalized_ticker} added to watchlist.")
+                        st.success(f"{normalized_ticker} added to favorites.")
+            button_index += 1
+
+        if show_remove_favorite:
+            if button_cols[button_index].button(
+                "Remove from favorites",
+                key=f"unfav_{ticker}_{unique_id}",
+                use_container_width=True,
+            ):
+                user = st.session_state.user
+                normalized_ticker = ticker.strip().upper()
+                updated_user = replace(
+                    user,
+                    favorites=[
+                        favorite for favorite in user.favorites
+                        if favorite.strip().upper() != normalized_ticker
+                    ],
+                )
+                try:
+                    persist_user(updated_user)
+                except Exception as exc:
+                    st.error(f"Unable to remove {normalized_ticker} from favorites: {exc}")
+                else:
+                    st.session_state.user = updated_user
+                    st.session_state.favorite_tickers = updated_user.favorites
+                    st.toast(f"{normalized_ticker} removed from favorites.")
+                    st.rerun()
+            button_index += 1
 
         if show_detail_button:
-            detail_col = button_cols[1] if show_add_to_watchlist else button_cols[0]
-            if detail_col.button(
+            if button_cols[button_index].button(
                 "Go to detail page →",
                 key=f"detail_{ticker}_{unique_id}",
                 type="primary",
@@ -955,6 +984,7 @@ if favorite_list:
             favorite_snapshot["ticker"],
             favorite_snapshot,
             show_add_to_watchlist=False,
+            show_remove_favorite=True,
             show_detail_button=True,
         )
 else:
