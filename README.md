@@ -2,6 +2,10 @@
 
 This educational Streamlit application lets users research real stock data and simulate investing with virtual cash, without using a brokerage or risking real money. It combines financial data integrations, account and portfolio workflows, an on-demand machine-learning experiment, and a read-only generative-AI assistant.
 
+## Website Link
+
+https://stocktradesim.streamlit.app/
+
 ## Key Features
 
 ### Stock Research
